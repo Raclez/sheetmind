@@ -59,7 +59,7 @@ graph TB
 
 | 组件 / Component | 技术选型 / Technology | 版本 / Version | 作用 / Purpose |
 |-----------------|----------------------|---------------|---------------|
-| **核心引擎**<br>**Core Engine** | Apache POI + Excel Streaming Reader | 5.2.5 + 2.1.0 | 流式读写 Excel 文件 |
+| **核心引擎**<br>**Core Engine** | Apache POI + Excel Streaming Reader | 5.2.5 | 流式读写 Excel 文件 |
 | **协议层**<br>**Protocol Layer** | mcp-annotated-java-sdk | 0.13.0 | MCP 标准协议实现 |
 | **表达式引擎**<br>**Expression Engine** | Apache JEXL 3 | 3.3 | 动态过滤表达式解析 |
 | **序列化**<br>**Serialization** | Jackson Databind | 2.17.1 | JSON 序列化/反序列化 |
