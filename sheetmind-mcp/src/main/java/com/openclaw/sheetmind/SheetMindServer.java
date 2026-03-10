@@ -84,17 +84,14 @@ public class SheetMindServer {
                     previewRows.add(rowData);
                 }
                 
-                // Continue counting remaining rows
-                while (rowIterator.hasNext()) {
-                    rowIterator.next();
-                    rowCount++;
-                }
-                
+                // Note: Streaming reader cannot provide exact row count without full scan
+                // We stop after preview to maintain performance for large files
                 ObjectNode response = mapper.createObjectNode();
                 response.put("fileName", path.getFileName().toString());
                 response.put("sheetName", sheet.getSheetName());
-                response.put("estimatedRowCount", rowCount);
+                response.put("previewRowCount", rowCount); // Only rows actually read
                 response.put("columnCount", headers.size());
+                response.put("note", "Row count is based on preview only; streaming reader cannot determine total rows without full scan");
                 
                 ArrayNode headersNode = response.putArray("headers");
                 headers.forEach(headersNode::add);
@@ -191,20 +188,13 @@ public class SheetMindServer {
                     }
                 }
                 
-                // Continue counting for total filtered (but don't collect more data)
-                while (rowIterator.hasNext()) {
-                    Row row = rowIterator.next();
-                    totalProcessed++;
-                    
-                    MapContext context = createJexlContext(headers, row);
-                    if (evaluateExpression(expression, context)) {
-                        totalFiltered++;
-                    }
-                }
+                // Stop after reaching limit to avoid full scan
+                // Check if there are more rows (without processing them) to determine hasMore
+                boolean hasMore = rowIterator.hasNext();
                 
                 ObjectNode response = mapper.createObjectNode();
-                response.put("totalProcessed", totalProcessed);
-                response.put("totalFiltered", totalFiltered);
+                response.put("rowsProcessed", totalProcessed);
+                response.put("rowsFiltered", totalFiltered);
                 response.put("returnedCount", results.size());
                 
                 ArrayNode resultsNode = response.putArray("results");
@@ -215,7 +205,7 @@ public class SheetMindServer {
                 ObjectNode paginationNode = response.putObject("pagination");
                 paginationNode.put("limit", limit);
                 paginationNode.put("offset", offset);
-                paginationNode.put("hasMore", totalFiltered > (offset + results.size()));
+                paginationNode.put("hasMore", hasMore);
                 
                 return successResponse(response);
                 
@@ -249,6 +239,13 @@ public class SheetMindServer {
             Files.copy(path, backupPath, StandardCopyOption.REPLACE_EXISTING);
             
             try {
+                // File size check to prevent OOM (XSSFWorkbook loads entire file into memory)
+                long fileSize = Files.size(path);
+                final long SIZE_LIMIT = 50 * 1024 * 1024; // 50MB
+                if (fileSize > SIZE_LIMIT) {
+                    return errorResponse("File size (" + (fileSize / (1024 * 1024)) + "MB) exceeds limit of " + (SIZE_LIMIT / (1024 * 1024)) + "MB for update_cell. Use inspect_spreadsheet and smart_search_rows for large files.");
+                }
+                
                 // Read existing workbook
                 Workbook workbook;
                 if (filePath.toLowerCase().endsWith(".xlsx")) {
@@ -265,18 +262,8 @@ public class SheetMindServer {
                 
                 Cell cell = row.getCell(colIndex, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
                 
-                // Try to set appropriate cell type
-                if (newValue.matches("-?\\d+(\\.\\d+)?")) {
-                    if (newValue.contains(".")) {
-                        cell.setCellValue(Double.parseDouble(newValue));
-                    } else {
-                        cell.setCellValue(Long.parseLong(newValue));
-                    }
-                } else if (newValue.equalsIgnoreCase("true") || newValue.equalsIgnoreCase("false")) {
-                    cell.setCellValue(Boolean.parseBoolean(newValue));
-                } else {
-                    cell.setCellValue(newValue);
-                }
+                // Set cell value as string (safe default, preserves leading zeros and large numbers)
+                cell.setCellValue(newValue);
                 
                 // Write to temp file first
                 Path tempPath = Files.createTempFile("sheetmind_update_", ".xlsx");
@@ -374,6 +361,8 @@ public class SheetMindServer {
                 double max = Double.MIN_VALUE;
                 int count = 0;
                 Set<Double> uniqueValues = new HashSet<>();
+                final int UNIQUE_LIMIT = 10000;
+                boolean uniqueLimitReached = false;
                 
                 while (rowIterator.hasNext()) {
                     Row row = rowIterator.next();
@@ -385,7 +374,12 @@ public class SheetMindServer {
                         min = Math.min(min, value);
                         max = Math.max(max, value);
                         count++;
-                        uniqueValues.add(value);
+                        if (!uniqueLimitReached) {
+                            uniqueValues.add(value);
+                            if (uniqueValues.size() >= UNIQUE_LIMIT) {
+                                uniqueLimitReached = true;
+                            }
+                        }
                     }
                 }
                 
@@ -400,6 +394,9 @@ public class SheetMindServer {
                     response.put("min", min);
                     response.put("max", max);
                     response.put("uniqueCount", uniqueValues.size());
+                    if (uniqueLimitReached) {
+                        response.put("uniqueCountNote", "Unique count capped at " + UNIQUE_LIMIT + "; actual unique values may be higher");
+                    }
                 } else {
                     response.put("sum", 0);
                     response.put("average", 0);
@@ -436,20 +433,16 @@ public class SheetMindServer {
         return context;
     }
     
-    private static boolean evaluateExpression(JexlExpression expression, MapContext context) {
-        try {
-            Object result = expression.evaluate(context);
-            if (result instanceof Boolean) {
-                return (Boolean) result;
-            } else if (result instanceof Number) {
-                return ((Number) result).doubleValue() != 0.0;
-            } else if (result instanceof String) {
-                return !((String) result).isEmpty();
-            }
-            return false;
-        } catch (Exception e) {
-            return false;
+    private static boolean evaluateExpression(JexlExpression expression, MapContext context) throws JexlException {
+        Object result = expression.evaluate(context);
+        if (result instanceof Boolean) {
+            return (Boolean) result;
+        } else if (result instanceof Number) {
+            return ((Number) result).doubleValue() != 0.0;
+        } else if (result instanceof String) {
+            return !((String) result).isEmpty();
         }
+        return false;
     }
     
     private static Object getCellValue(Cell cell) {
