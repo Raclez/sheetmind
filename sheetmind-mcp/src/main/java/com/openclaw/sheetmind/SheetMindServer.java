@@ -35,6 +35,7 @@ public class SheetMindServer {
     private static final int DEFAULT_SEARCH_LIMIT = 20;
     private static final int STREAMING_ROW_CACHE_SIZE = 100;
     private static final int STREAMING_BUFFER_SIZE = 4096;
+    private static final DataFormatter DATA_FORMATTER = new DataFormatter();
 
     // 🔒 JEXL 安全沙箱配置：只允许基础字符串和数学操作，彻底阻断 RCE 注入
     private static final JexlEngine JEXL_ENGINE;
@@ -341,14 +342,30 @@ public class SheetMindServer {
             return "";
         }
         return switch (cell.getCellType()) {
-            case NUMERIC -> DateUtil.isCellDateFormatted(cell) ? cell.getDateCellValue().toString() : cell.getNumericCellValue();
+            case NUMERIC -> {
+                // 核心改动：如果 POI 识别到底层带有日期格式，直接让 DataFormatter 格式化输出
+                if (DateUtil.isCellDateFormatted(cell)) {
+                    yield DATA_FORMATTER.formatCellValue(cell);
+                } else {
+                    // 普通数字依然返回 Double，确保 JEXL 数学运算 (如 > 16) 完美生效
+                    yield cell.getNumericCellValue();
+                }
+            }
             case BOOLEAN -> cell.getBooleanCellValue();
             case STRING -> cell.getStringCellValue().trim();
             case FORMULA -> {
-                try { yield cell.getNumericCellValue(); }
-                catch (Exception e) { yield cell.getStringCellValue(); }
+                // 公式列也做同等升级
+                try {
+                    if (DateUtil.isCellDateFormatted(cell)) {
+                        yield DATA_FORMATTER.formatCellValue(cell);
+                    }
+                    yield cell.getNumericCellValue();
+                } catch (Exception e) {
+                    yield cell.getStringCellValue();
+                }
             }
-            default -> "";
+            // 空值、错误值等其他兜底情况，统统交给翻译官处理成字符串
+            default -> DATA_FORMATTER.formatCellValue(cell);
         };
     }
 
