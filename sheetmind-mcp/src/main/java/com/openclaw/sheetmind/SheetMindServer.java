@@ -10,7 +10,6 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.monitorjbl.xlsx.StreamingReader;
 import org.apache.poi.ss.usermodel.*;
-import org.apache.poi.xssf.streaming.SXSSFWorkbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.apache.commons.jexl3.*;
 import org.apache.commons.jexl3.JexlExpression;
@@ -33,6 +32,14 @@ public class SheetMindServer {
     private static final ObjectMapper mapper = new ObjectMapper();
     private static final JexlEngine jexlEngine = new JexlBuilder().create();
     
+    // Configuration constants
+    private static final long UPDATE_FILE_SIZE_LIMIT = 50L * 1024 * 1024; // 50MB
+    private static final int UNIQUE_VALUE_LIMIT = 10000;
+    private static final int PREVIEW_ROW_LIMIT = 5;
+    private static final int DEFAULT_SEARCH_LIMIT = 20;
+    private static final int STREAMING_ROW_CACHE_SIZE = 100;
+    private static final int STREAMING_BUFFER_SIZE = 4096;
+    
     static {
         // JexlEngine configuration is done through JexlBuilder
     }
@@ -49,8 +56,8 @@ public class SheetMindServer {
             }
             
             try (Workbook workbook = StreamingReader.builder()
-                    .rowCacheSize(100)
-                    .bufferSize(4096)
+                    .rowCacheSize(STREAMING_ROW_CACHE_SIZE)
+                    .bufferSize(STREAMING_BUFFER_SIZE)
                     .open(path.toFile())) {
                 
                 Sheet sheet = workbook.getSheetAt(0);
@@ -71,7 +78,7 @@ public class SheetMindServer {
                 }
                 
                 // Read up to 5 data rows for preview
-                int previewLimit = 5;
+                int previewLimit = PREVIEW_ROW_LIMIT;
                 while (rowIterator.hasNext() && previewRows.size() < previewLimit) {
                     Row row = rowIterator.next();
                     rowCount++;
@@ -122,7 +129,7 @@ public class SheetMindServer {
             @JsonProperty("pagination") Map<String, Integer> pagination) {
         
         try {
-            int limit = pagination != null ? pagination.getOrDefault("limit", 20) : 20;
+            int limit = pagination != null ? pagination.getOrDefault("limit", DEFAULT_SEARCH_LIMIT) : DEFAULT_SEARCH_LIMIT;
             int offset = pagination != null ? pagination.getOrDefault("offset", 0) : 0;
             
             Path path = Paths.get(filePath);
@@ -139,8 +146,8 @@ public class SheetMindServer {
             }
             
             try (Workbook workbook = StreamingReader.builder()
-                    .rowCacheSize(100)
-                    .bufferSize(4096)
+                    .rowCacheSize(STREAMING_ROW_CACHE_SIZE)
+                    .bufferSize(STREAMING_BUFFER_SIZE)
                     .open(path.toFile())) {
                 
                 Sheet sheet = workbook.getSheetAt(0);
@@ -241,9 +248,11 @@ public class SheetMindServer {
             try {
                 // File size check to prevent OOM (XSSFWorkbook loads entire file into memory)
                 long fileSize = Files.size(path);
-                final long SIZE_LIMIT = 50 * 1024 * 1024; // 50MB
-                if (fileSize > SIZE_LIMIT) {
-                    return errorResponse("File size (" + (fileSize / (1024 * 1024)) + "MB) exceeds limit of " + (SIZE_LIMIT / (1024 * 1024)) + "MB for update_cell. Use inspect_spreadsheet and smart_search_rows for large files.");
+                if (fileSize > UPDATE_FILE_SIZE_LIMIT) {
+                    double fileSizeMB = fileSize / (1024.0 * 1024.0);
+                    double limitMB = UPDATE_FILE_SIZE_LIMIT / (1024.0 * 1024.0);
+                    return errorResponse(String.format("File size (%.2f MB) exceeds limit of %.0f MB for update_cell. Use inspect_spreadsheet and smart_search_rows for large files.", 
+                        fileSizeMB, limitMB));
                 }
                 
                 // Read existing workbook
@@ -280,6 +289,15 @@ public class SheetMindServer {
                 response.put("message", String.format("Cell [%d,%d] updated to '%s'", rowIndex, colIndex, newValue));
                 response.put("backupFile", backupPath.toString());
                 
+                // Delete backup after successful update
+                try {
+                    Files.deleteIfExists(backupPath);
+                    response.put("backupDeleted", true);
+                } catch (IOException e) {
+                    response.put("backupDeleted", false);
+                    response.put("backupDeleteError", e.getMessage());
+                }
+                
                 return successResponse(response);
                 
             } catch (Exception e) {
@@ -292,13 +310,6 @@ public class SheetMindServer {
                     // Log but don't throw
                 }
                 return errorResponse("Update failed: " + e.getMessage());
-            } finally {
-                // Clean up backup after successful update
-                try {
-                    Files.deleteIfExists(backupPath);
-                } catch (IOException e) {
-                    // Ignore cleanup errors
-                }
             }
             
         } catch (Exception e) {
@@ -321,8 +332,8 @@ public class SheetMindServer {
             }
             
             try (Workbook workbook = StreamingReader.builder()
-                    .rowCacheSize(100)
-                    .bufferSize(4096)
+                    .rowCacheSize(STREAMING_ROW_CACHE_SIZE)
+                    .bufferSize(STREAMING_BUFFER_SIZE)
                     .open(path.toFile())) {
                 
                 Sheet sheet = workbook.getSheetAt(0);
@@ -361,7 +372,7 @@ public class SheetMindServer {
                 double max = Double.MIN_VALUE;
                 int count = 0;
                 Set<Double> uniqueValues = new HashSet<>();
-                final int UNIQUE_LIMIT = 10000;
+                final int UNIQUE_LIMIT = UNIQUE_VALUE_LIMIT;
                 boolean uniqueLimitReached = false;
                 
                 while (rowIterator.hasNext()) {
