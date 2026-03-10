@@ -1,0 +1,60 @@
+# Maven
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
+# IntelliJ
+.idea/
+*.iml
+*.iws
+
+# Eclipse
+.classpath
+.project
+.settings/
+
+# NetBeans
+nbactions.xml
+nb-configuration.xml
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp files
+*.tmp
+*.temp
+
+# Logs
+*.log
+
+# Backup files
+*.bak
+
+# Example data
+examples/*.xlsx
+!examples/sample_data.xlsx
+
+# Jar files (except source/javadoc jars)
+*.jar
+!target/*-sources.jar
+!target/*-javadoc.jar
+
+# OpenClaw workspace
+.openclaw/
+.clawhub/
+
+# Local config
+*.properties
+*.cfg
+*.config
