@@ -300,35 +300,60 @@ mvn compile
 mvn exec:java -Dexec.mainClass="com.openclaw.sheetmind.ExampleDataGenerator"
 # 生成: examples/sample_data.xlsx (1000行销售数据)
 ```
+## 🔌 接入与使用 / Integration & Usage
 
-### 测试所有工具 / Test All Tools
-```bash
-# 1. 检查工作表 / Inspect spreadsheet
-curl -X POST -H "Content-Type: application/json" -d '{
-  "filePath": "examples/sample_data.xlsx"
-}' http://localhost:8080/inspect_spreadsheet
+> **⚠️ 重要提示 / Important Note:** > SheetMind 是基于 **Stdio (标准输入输出)** 协议的 MCP 服务器，**不提供 HTTP/REST API**。请勿使用 `curl` 或 Postman 进行测试。它必须作为子进程被 AI 客户端唤醒。
+> SheetMind operates over the **Stdio** protocol. It does **NOT** expose HTTP endpoints. Do not use `curl` to test it.
 
-# 2. 智能搜索 / Smart search
-curl -X POST -H "Content-Type: application/json" -d '{
-  "filePath": "examples/sample_data.xlsx",
-  "query": "Price > 100 && Region == \"North\"",
-  "pagination": {"limit": 5, "offset": 0}
-}' http://localhost:8080/smart_search_rows
+确保您已经通过 `mvn clean package` 生成了 Fat JAR：
+Ensure you have built the Fat JAR using Maven:
+`target/sheetmind-mcp-1.0-SNAPSHOT-jar-with-dependencies.jar`
 
-# 3. 更新单元格 / Update cell
-curl -X POST -H "Content-Type: application/json" -d '{
-  "filePath": "examples/sample_data.xlsx",
-  "row": 10,
-  "col": 3,
-  "value": "TEST_UPDATE"
-}' http://localhost:8080/update_cell
+### 场景一：接入 Claude Desktop / Use with Claude Desktop
+修改 Claude Desktop 的配置文件：
+Edit your Claude Desktop configuration file:
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
-# 4. 列统计 / Summarize column
-curl -X POST -H "Content-Type: application/json" -d '{
-  "filePath": "examples/sample_data.xlsx",
-  "column": "E"
-}' http://localhost:8080/summarize_column
+添加以下配置（注意替换为您本机的绝对路径）：
+Add the following configuration (replace with your absolute path):
+
+```json
+{
+  "mcpServers": {
+    "sheetmind": {
+      "command": "java",
+      "args": [
+        "-jar",
+        "/绝对路径/到/你的/sheetmind-mcp/target/sheetmind-mcp-1.0-SNAPSHOT-jar-with-dependencies.jar"
+      ]
+    }
+  }
+}
 ```
+*保存后，彻底重启 Claude Desktop 即可。您可以直接对 Claude 说：“帮我用 sheetmind 查一下工作区里的 test.xlsx”。*
+
+### 场景二：接入 Cursor IDE / Use with Cursor IDE
+1. 打开 Cursor 设置 / Open Cursor Settings -> **Features** -> **MCP**
+2. 点击 **+ Add New MCP Server**
+3. 填写以下信息 / Fill in the details:
+    - **Name**: `sheetmind`
+    - **Type**: `command`
+    - **Command**: `java -jar /绝对路径/到/你的/sheetmind-mcp/target/sheetmind-mcp-1.0-SNAPSHOT-jar-with-dependencies.jar`
+4. 点击 Save。确认绿灯亮起后，即可在 Cursor Composer 中无缝调用。
+
+---
+
+## 🧪 开发者调试 / Developer Debugging
+
+如果您只想在本地测试各个工具的输入输出（不依赖 Claude/Cursor），可以使用官方的 **MCP Inspector** 调试面板（需预装 Node.js）：
+If you want to test the tools with a GUI before integrating, use the official MCP Inspector:
+
+```bash
+# 在项目根目录下执行 / Run in the project root directory
+npx @modelcontextprotocol/inspector java -jar target/sheetmind-mcp-1.0-SNAPSHOT-jar-with-dependencies.jar
+```
+这会在您的浏览器中自动打开一个调试页面，您可以像使用 Postman 一样直观地测试 `inspect_spreadsheet` 和 `smart_search_rows` 等所有工具。
 
 ---
 
