@@ -1,15 +1,15 @@
 package com.openclaw.sheetmind;
 
-import com.github.thought2code.mcp.annotated.annotation.McpTool;
+import com.github.pjfanning.xlsx.StreamingReader;
 import com.github.thought2code.mcp.annotated.McpServers;
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.monitorjbl.xlsx.StreamingReader;
+import com.github.thought2code.mcp.annotated.annotation.McpServerApplication;
+import com.github.thought2code.mcp.annotated.annotation.McpTool;
+
+import com.github.thought2code.mcp.annotated.annotation.McpToolParam;
+import com.github.thought2code.mcp.annotated.configuration.McpServerConfiguration;
+import org.apache.commons.jexl3.introspection.JexlSandbox;
 import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.streaming.SXSSFWorkbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.apache.commons.jexl3.*;
 import org.apache.commons.jexl3.JexlExpression;
@@ -18,8 +18,6 @@ import org.apache.commons.jexl3.MapContext;
 import java.io.*;
 import java.nio.file.*;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 
 /**
  * SheetMind MCP Server - Excel processing service for AI agents
@@ -27,48 +25,38 @@ import java.util.stream.Collectors;
  * Handles large Excel files (millions of rows) with streaming I/O
  * to prevent OOM and provide accurate data filtering for AI.
  */
+@McpServerApplication
 public class SheetMindServer {
-    
-    private static final ObjectMapper mapper = new ObjectMapper();
-    private static final JexlEngine jexlEngine = new JexlBuilder().create();
-    
-    // Configuration constants
-    private static final long UPDATE_FILE_SIZE_LIMIT = 50L * 1024 * 1024; // 50MB
+
+    // ========== 核心安全与性能配置 ==========
+    // 强制限制大模型的读写范围，防止读取系统密码或敏感配置
+    private static final String WORKSPACE_DIR = System.getProperty("user.home") + File.separator + "SheetMind_Workspace";
     private static final int UNIQUE_VALUE_LIMIT = 10000;
-    private static final int PREVIEW_ROW_LIMIT = 5;
     private static final int DEFAULT_SEARCH_LIMIT = 20;
     private static final int STREAMING_ROW_CACHE_SIZE = 100;
     private static final int STREAMING_BUFFER_SIZE = 4096;
-    
+
+    // 🔒 JEXL 安全沙箱配置：只允许基础字符串和数学操作，彻底阻断 RCE 注入
+    private static final JexlEngine JEXL_ENGINE;
     static {
-        // JexlEngine configuration is done through JexlBuilder
+        JexlSandbox sandbox = new JexlSandbox(false);
+        sandbox.allow(String.class.getName());
+        sandbox.allow(Math.class.getName());
+        JEXL_ENGINE = new JexlBuilder().sandbox(sandbox).strict(true).silent(false).cache(512).create();
     }
-    
-    /**
-     * Tool 1: Inspect spreadsheet to get metadata and preview
-     */
-    @McpTool(name = "inspect_spreadsheet", description = "Get worksheet metadata and preview data (first 5 rows)")
-    public String inspectSpreadsheet(@JsonProperty("filePath") String filePath) {
+
+    // ========== 工具 1: 结构探测 ==========
+    @McpTool(name = "inspect_spreadsheet", description = "获取工作表元数据和前 5 行预览，以便编写准确的 JEXL 筛选条件")
+    public Map<String, Object> inspectSpreadsheet(@McpToolParam(name = "filePath", description = "Excel文件绝对路径") String  filePath) {
         try {
-            Path path = Paths.get(filePath);
-            if (!Files.exists(path)) {
-                return errorResponse("File not found: " + filePath);
-            }
-            
-            try (Workbook workbook = StreamingReader.builder()
-                    .rowCacheSize(STREAMING_ROW_CACHE_SIZE)
-                    .bufferSize(STREAMING_BUFFER_SIZE)
-                    .open(path.toFile())) {
-                
+            File file = getSafeFile(filePath);
+            try (Workbook workbook = StreamingReader.builder().rowCacheSize(100).open(file)) {
                 Sheet sheet = workbook.getSheetAt(0);
-                int rowCount = 0;
-                
-                // Estimate row count by iterating (streaming doesn't have getPhysicalNumberOfRows)
                 Iterator<Row> rowIterator = sheet.iterator();
                 List<Map<String, Object>> previewRows = new ArrayList<>();
                 List<String> headers = new ArrayList<>();
-                
-                // Read first row as headers
+
+                int rowCount = 0;
                 if (rowIterator.hasNext()) {
                     Row headerRow = rowIterator.next();
                     rowCount++;
@@ -76,13 +64,10 @@ public class SheetMindServer {
                         headers.add(getCellValueAsString(cell));
                     }
                 }
-                
-                // Read up to 5 data rows for preview
-                int previewLimit = PREVIEW_ROW_LIMIT;
-                while (rowIterator.hasNext() && previewRows.size() < previewLimit) {
+
+                while (rowIterator.hasNext() && previewRows.size() < 5) {
                     Row row = rowIterator.next();
                     rowCount++;
-                    
                     Map<String, Object> rowData = new LinkedHashMap<>();
                     for (int i = 0; i < headers.size(); i++) {
                         Cell cell = row.getCell(i, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
@@ -90,457 +75,340 @@ public class SheetMindServer {
                     }
                     previewRows.add(rowData);
                 }
-                
-                // Note: Streaming reader cannot provide exact row count without full scan
-                // We stop after preview to maintain performance for large files
-                ObjectNode response = mapper.createObjectNode();
-                response.put("fileName", path.getFileName().toString());
-                response.put("sheetName", sheet.getSheetName());
-                response.put("previewRowCount", rowCount); // Only rows actually read
-                response.put("columnCount", headers.size());
-                response.put("note", "Row count is based on preview only; streaming reader cannot determine total rows without full scan");
-                
-                ArrayNode headersNode = response.putArray("headers");
-                headers.forEach(headersNode::add);
-                
-                ArrayNode previewNode = response.putArray("preview");
-                for (Map<String, Object> row : previewRows) {
-                    previewNode.add(mapper.valueToTree(row));
-                }
-                
-                return successResponse(response);
-                
-            } catch (Exception e) {
-                return errorResponse("Error reading file: " + e.getMessage());
+
+                return Map.of(
+                        "success", true,
+                        "fileName", file.getName(),
+                        "sheetName", sheet.getSheetName(),
+                        "previewRowCount", rowCount,
+                        "headers", headers,
+                        "preview", previewRows,
+                        "note", "流式读取，此为前置预览。若需查找完整数据请调用 smart_search_rows。"
+                );
             }
-            
         } catch (Exception e) {
-            return errorResponse("Unexpected error: " + e.getMessage());
+            return errorResponse(e);
         }
     }
-    
-    /**
-     * Tool 2: Smart search rows with JEXL expression filtering
-     */
-    @McpTool(name = "smart_search_rows", description = "Streaming search with JEXL expression filtering (e.g., 'price > 100 && status == \"Done\"')")
-    public String smartSearchRows(
-            @JsonProperty("filePath") String filePath,
-            @JsonProperty("query") String query,
-            @JsonProperty("pagination") Map<String, Integer> pagination) {
-        
+
+    // ========== 工具 2: 智能流式检索 ==========
+    @McpTool(name = "smart_search_rows", description = "带有 JEXL 逻辑引擎的流式检索...")
+    public Map<String, Object> smartSearchRows(
+            @McpToolParam(name = "filePath", description = "Excel文件绝对路径") String filePath,
+            @McpToolParam(name = "query", description = "JEXL查询表达式") String query,
+            @McpToolParam(name = "pagination", description = "分页参数") Map<String, Integer> pagination) {
         try {
+            File file = getSafeFile(filePath);
             int limit = pagination != null ? pagination.getOrDefault("limit", DEFAULT_SEARCH_LIMIT) : DEFAULT_SEARCH_LIMIT;
             int offset = pagination != null ? pagination.getOrDefault("offset", 0) : 0;
-            
-            Path path = Paths.get(filePath);
-            if (!Files.exists(path)) {
-                return errorResponse("File not found: " + filePath);
-            }
-            
-            // Parse JEXL expression
-            JexlExpression expression;
-            try {
-                expression = jexlEngine.createExpression(query);
-            } catch (Exception e) {
-                return errorResponse("Invalid JEXL expression: " + e.getMessage());
-            }
-            
-            try (Workbook workbook = StreamingReader.builder()
-                    .rowCacheSize(STREAMING_ROW_CACHE_SIZE)
-                    .bufferSize(STREAMING_BUFFER_SIZE)
-                    .open(path.toFile())) {
-                
+
+            JexlExpression expression = (query != null && !query.isBlank()) ? JEXL_ENGINE.createExpression(query) : null;
+
+            try (Workbook workbook = StreamingReader.builder().rowCacheSize(100).open(file)) {
                 Sheet sheet = workbook.getSheetAt(0);
                 Iterator<Row> rowIterator = sheet.iterator();
-                
-                // Read headers
+
                 List<String> headers = new ArrayList<>();
                 if (rowIterator.hasNext()) {
-                    Row headerRow = rowIterator.next();
-                    for (Cell cell : headerRow) {
+                    for (Cell cell : rowIterator.next()) {
                         headers.add(getCellValueAsString(cell));
                     }
                 }
-                
+
                 List<Map<String, Object>> results = new ArrayList<>();
-                int totalFiltered = 0;
-                int totalProcessed = 0;
-                
-                // Skip offset rows
-                int skipCount = 0;
-                while (rowIterator.hasNext() && skipCount < offset) {
-                    Row row = rowIterator.next();
-                    totalProcessed++;
-                    
-                    MapContext context = createJexlContext(headers, row);
-                    if (evaluateExpression(expression, context)) {
-                        skipCount++;
-                    }
-                }
-                
-                // Collect up to limit rows
-                while (rowIterator.hasNext() && results.size() < limit) {
-                    Row row = rowIterator.next();
-                    totalProcessed++;
-                    
-                    MapContext context = createJexlContext(headers, row);
-                    if (evaluateExpression(expression, context)) {
-                        Map<String, Object> rowData = new LinkedHashMap<>();
-                        for (int i = 0; i < headers.size(); i++) {
-                            Cell cell = row.getCell(i, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
-                            rowData.put(headers.get(i), getCellValue(cell));
-                        }
-                        results.add(rowData);
-                        totalFiltered++;
-                    }
-                }
-                
-                // Stop after reaching limit to avoid full scan
-                // Check if there are more rows (without processing them) to determine hasMore
-                boolean hasMore = rowIterator.hasNext();
-                
-                ObjectNode response = mapper.createObjectNode();
-                response.put("rowsProcessed", totalProcessed);
-                response.put("rowsFiltered", totalFiltered);
-                response.put("returnedCount", results.size());
-                
-                ArrayNode resultsNode = response.putArray("results");
-                for (Map<String, Object> row : results) {
-                    resultsNode.add(mapper.valueToTree(row));
-                }
-                
-                ObjectNode paginationNode = response.putObject("pagination");
-                paginationNode.put("limit", limit);
-                paginationNode.put("offset", offset);
-                paginationNode.put("hasMore", hasMore);
-                
-                return successResponse(response);
-                
-            } catch (Exception e) {
-                return errorResponse("Error processing search: " + e.getMessage());
-            }
-            
-        } catch (Exception e) {
-            return errorResponse("Unexpected error: " + e.getMessage());
-        }
-    }
-    
-    /**
-     * Tool 3: Update cell with atomic backup
-     */
-    @McpTool(name = "update_cell", description = "Update single cell with atomic backup (creates .bak file before modification)")
-    public String updateCell(
-            @JsonProperty("filePath") String filePath,
-            @JsonProperty("row") int rowIndex,  // 0-based
-            @JsonProperty("col") int colIndex,   // 0-based
-            @JsonProperty("value") String newValue) {
-        
-        try {
-            Path path = Paths.get(filePath);
-            if (!Files.exists(path)) {
-                return errorResponse("File not found: " + filePath);
-            }
-            
-            // Create backup
-            Path backupPath = Paths.get(filePath + ".bak");
-            Files.copy(path, backupPath, StandardCopyOption.REPLACE_EXISTING);
-            
-            try {
-                // File size check to prevent OOM (XSSFWorkbook loads entire file into memory)
-                long fileSize = Files.size(path);
-                if (fileSize > UPDATE_FILE_SIZE_LIMIT) {
-                    double fileSizeMB = fileSize / (1024.0 * 1024.0);
-                    double limitMB = UPDATE_FILE_SIZE_LIMIT / (1024.0 * 1024.0);
-                    return errorResponse(String.format("File size (%.2f MB) exceeds limit of %.0f MB for update_cell. Use inspect_spreadsheet and smart_search_rows for large files.", 
-                        fileSizeMB, limitMB));
-                }
-                
-                // Read existing workbook
-                Workbook workbook;
-                if (filePath.toLowerCase().endsWith(".xlsx")) {
-                    workbook = new XSSFWorkbook(Files.newInputStream(path));
-                } else {
-                    return errorResponse("Only .xlsx files are supported for update");
-                }
-                
-                Sheet sheet = workbook.getSheetAt(0);
-                Row row = sheet.getRow(rowIndex);
-                if (row == null) {
-                    row = sheet.createRow(rowIndex);
-                }
-                
-                Cell cell = row.getCell(colIndex, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
-                
-                // Set cell value as string (safe default, preserves leading zeros and large numbers)
-                cell.setCellValue(newValue);
-                
-                // Write to temp file first
-                Path tempPath = Files.createTempFile("sheetmind_update_", ".xlsx");
-                try (FileOutputStream fos = new FileOutputStream(tempPath.toFile())) {
-                    workbook.write(fos);
-                }
-                workbook.close();
-                
-                // Atomically replace original file
-                Files.move(tempPath, path, StandardCopyOption.REPLACE_EXISTING);
-                
-                ObjectNode response = mapper.createObjectNode();
-                response.put("success", true);
-                response.put("message", String.format("Cell [%d,%d] updated to '%s'", rowIndex, colIndex, newValue));
-                response.put("backupFile", backupPath.toString());
-                
-                // Delete backup after successful update
-                try {
-                    Files.deleteIfExists(backupPath);
-                    response.put("backupDeleted", true);
-                } catch (IOException e) {
-                    response.put("backupDeleted", false);
-                    response.put("backupDeleteError", e.getMessage());
-                }
-                
-                return successResponse(response);
-                
-            } catch (Exception e) {
-                // Restore from backup on error
-                try {
-                    if (Files.exists(backupPath)) {
-                        Files.copy(backupPath, path, StandardCopyOption.REPLACE_EXISTING);
-                    }
-                } catch (Exception restoreEx) {
-                    // Log but don't throw
-                }
-                return errorResponse("Update failed: " + e.getMessage());
-            }
-            
-        } catch (Exception e) {
-            return errorResponse("Unexpected error: " + e.getMessage());
-        }
-    }
-    
-    /**
-     * Tool 4: Summarize column with statistical aggregations
-     */
-    @McpTool(name = "summarize_column", description = "Calculate statistics for a numeric column (sum, avg, max, min, unique count)")
-    public String summarizeColumn(
-            @JsonProperty("filePath") String filePath,
-            @JsonProperty("column") String column) {  // column letter (A, B, C) or index (0, 1, 2)
-        
-        try {
-            Path path = Paths.get(filePath);
-            if (!Files.exists(path)) {
-                return errorResponse("File not found: " + filePath);
-            }
-            
-            try (Workbook workbook = StreamingReader.builder()
-                    .rowCacheSize(STREAMING_ROW_CACHE_SIZE)
-                    .bufferSize(STREAMING_BUFFER_SIZE)
-                    .open(path.toFile())) {
-                
-                Sheet sheet = workbook.getSheetAt(0);
-                Iterator<Row> rowIterator = sheet.iterator();
-                
-                // Read headers
-                List<String> headers = new ArrayList<>();
-                if (rowIterator.hasNext()) {
-                    Row headerRow = rowIterator.next();
-                    for (Cell cell : headerRow) {
-                        headers.add(getCellValueAsString(cell));
-                    }
-                }
-                
-                // Resolve column index
-                int colIndex = -1;
-                try {
-                    // Try as column letter first
-                    if (column.matches("[A-Za-z]+")) {
-                        colIndex = convertColumnLetterToIndex(column.toUpperCase());
-                    } else {
-                        // Try as integer index
-                        colIndex = Integer.parseInt(column);
-                    }
-                } catch (Exception e) {
-                    return errorResponse("Invalid column identifier: " + column);
-                }
-                
-                if (colIndex < 0 || colIndex >= headers.size()) {
-                    return errorResponse("Column index out of range: " + colIndex);
-                }
-                
-                // Statistics
-                double sum = 0.0;
-                double min = Double.MAX_VALUE;
-                double max = Double.MIN_VALUE;
-                int count = 0;
-                Set<Double> uniqueValues = new HashSet<>();
-                final int UNIQUE_LIMIT = UNIQUE_VALUE_LIMIT;
-                boolean uniqueLimitReached = false;
-                
+                int totalFiltered = 0, totalProcessed = 0, skipCount = 0;
+
                 while (rowIterator.hasNext()) {
                     Row row = rowIterator.next();
-                    Cell cell = row.getCell(colIndex, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
-                    
-                    if (cell.getCellType() == CellType.NUMERIC) {
-                        double value = cell.getNumericCellValue();
-                        sum += value;
-                        min = Math.min(min, value);
-                        max = Math.max(max, value);
-                        count++;
-                        if (!uniqueLimitReached) {
-                            uniqueValues.add(value);
-                            if (uniqueValues.size() >= UNIQUE_LIMIT) {
-                                uniqueLimitReached = true;
+                    totalProcessed++;
+                    MapContext context = createJexlContext(headers, row);
+
+                    if (expression == null || evaluateExpression(expression, context)) {
+                        if (skipCount < offset) {
+                            skipCount++;
+                        } else if (results.size() < limit) {
+                            Map<String, Object> rowData = new LinkedHashMap<>();
+                            for (int i = 0; i < headers.size(); i++) {
+                                rowData.put(headers.get(i), getCellValue(row.getCell(i, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK)));
+                            }
+                            results.add(rowData);
+                            totalFiltered++;
+                        } else {
+                            // Hit limit, check if has more
+                            boolean hasMore = true;
+                            return successResponse(Map.of(
+                                    "rowsProcessed", totalProcessed,
+                                    "returnedCount", results.size(),
+                                    "results", results,
+                                    "pagination", Map.of("limit", limit, "offset", offset, "hasMore", hasMore)
+                            ));
+                        }
+                    }
+                }
+                return successResponse(Map.of(
+                        "rowsProcessed", totalProcessed, "returnedCount", results.size(), "results", results,
+                        "pagination", Map.of("limit", limit, "offset", offset, "hasMore", false)
+                ));
+            }
+        } catch (Exception e) {
+            return errorResponse(e);
+        }
+    }
+
+    // ========== 工具 3: 原子无内存泄漏修改 (Stream-Copy-Append) ==========
+    @McpTool(name = "update_cell", description = "精准更新特定单元格...")
+    public Map<String, Object> updateCell(
+            @McpToolParam(name = "filePath", description = "Excel文件绝对路径") String filePath,
+            @McpToolParam(name = "row", description = "行索引") int row,
+            @McpToolParam(name = "col", description = "列索引") int col,
+            @McpToolParam(name = "value", description = "新值") String value) {
+        try {
+            File safeFile = getSafeFile(filePath);
+            File backupPath = new File(safeFile.getAbsolutePath() + ".bak");
+            File tempPath = new File(safeFile.getAbsolutePath() + ".tmp");
+
+            // 1. 创建备份
+            Files.copy(safeFile.toPath(), backupPath.toPath(), StandardCopyOption.REPLACE_EXISTING);
+
+            // 2. 双流搬运模式 (O(1) 内存消耗，彻底摒弃 XSSFWorkbook)
+            try (InputStream is = new FileInputStream(safeFile);
+                 Workbook readWb = StreamingReader.builder().rowCacheSize(100).open(is);
+                 SXSSFWorkbook writeWb = new SXSSFWorkbook(100);
+                 FileOutputStream fos = new FileOutputStream(tempPath)) {
+
+                Sheet readSheet = readWb.getSheetAt(0);
+                Sheet writeSheet = writeWb.createSheet(readSheet.getSheetName());
+                Iterator<Row> rowIterator = readSheet.iterator();
+                int currentRowIndex = 0;
+
+                while (rowIterator.hasNext()) {
+                    Row readRow = rowIterator.next();
+                    int logicalRowNum = readRow.getRowNum();
+
+                    // 补齐被流式读取器跳过的空行
+                    while (currentRowIndex < logicalRowNum) {
+                        if (currentRowIndex == row) {
+                            writeSheet.createRow(currentRowIndex).createCell(col).setCellValue(value);
+                        }
+                        currentRowIndex++;
+                    }
+
+                    Row writeRow = writeSheet.createRow(logicalRowNum);
+                    currentRowIndex = logicalRowNum + 1;
+
+                    // 拷贝单元格，并在命中目标坐标时进行值替换
+                    int maxCol = Math.max((int) readRow.getLastCellNum(), col + 1);
+                    for (int c = 0; c < maxCol; c++) {
+                        if (logicalRowNum == row && c == col) {
+                            writeRow.createCell(c).setCellValue(value);
+                        } else {
+                            Cell readCell = readRow.getCell(c);
+                            if (readCell != null) {
+                                copyCellValue(readCell, writeRow.createCell(c));
                             }
                         }
                     }
                 }
-                
-                ObjectNode response = mapper.createObjectNode();
-                response.put("columnName", headers.get(colIndex));
-                response.put("columnIndex", colIndex);
-                response.put("totalRows", count);
-                
-                if (count > 0) {
-                    response.put("sum", sum);
-                    response.put("average", sum / count);
-                    response.put("min", min);
-                    response.put("max", max);
-                    response.put("uniqueCount", uniqueValues.size());
-                    if (uniqueLimitReached) {
-                        response.put("uniqueCountNote", "Unique count capped at " + UNIQUE_LIMIT + "; actual unique values may be higher");
+
+                // 如果目标行在文件物理尾部之外，追加新行
+                while (currentRowIndex <= row) {
+                    if (currentRowIndex == row) {
+                        writeSheet.createRow(currentRowIndex).createCell(col).setCellValue(value);
                     }
-                } else {
-                    response.put("sum", 0);
-                    response.put("average", 0);
-                    response.put("min", 0);
-                    response.put("max", 0);
-                    response.put("uniqueCount", 0);
-                    response.put("note", "No numeric values found in column");
+                    currentRowIndex++;
                 }
-                
-                return successResponse(response);
-                
-            } catch (Exception e) {
-                return errorResponse("Error summarizing column: " + e.getMessage());
+
+                writeWb.write(fos);
+                writeWb.dispose(); // 清理磁盘碎片
             }
-            
+
+            // 3. 原子替换
+            Files.move(tempPath.toPath(), safeFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            Files.deleteIfExists(backupPath.toPath());
+
+            return successResponse(Map.of("message", String.format("成功更新单元格 [%d,%d] 为 '%s'", row, col, value)));
+
         } catch (Exception e) {
-            return errorResponse("Unexpected error: " + e.getMessage());
+            return errorResponse(e);
         }
     }
-    
-    // ========== Helper Methods ==========
-    
+
+    // ========== 工具 4: 数据统计分析 ==========
+    @McpTool(name = "summarize_column", description = "计算指定数值列的统计信息...")
+    public Map<String, Object> summarizeColumn(
+            @McpToolParam(name = "filePath", description = "Excel文件绝对路径") String filePath,
+            @McpToolParam(name = "column", description = "列标识") String column) {
+        try {
+            File safeFile = getSafeFile(filePath);
+            try (Workbook workbook = new XSSFWorkbook(safeFile)) {
+                Sheet sheet = workbook.getSheetAt(0);
+                Iterator<Row> rowIterator = sheet.iterator();
+
+                List<String> headers = new ArrayList<>();
+                if (rowIterator.hasNext()) {
+                    for (Cell cell : rowIterator.next()) {
+                        headers.add(getCellValueAsString(cell));
+                    }
+                }
+
+                int colIndex = column.matches("[A-Za-z]+") ? convertColumnLetterToIndex(column.toUpperCase()) : Integer.parseInt(column);
+                if (colIndex < 0 || colIndex >= headers.size()) {
+                    throw new IllegalArgumentException("Column index out of range.");
+                }
+
+                double sum = 0.0, min = Double.MAX_VALUE, max = Double.MIN_VALUE;
+                int count = 0;
+                Set<Double> uniqueValues = new HashSet<>();
+                boolean uniqueLimitReached = false;
+
+                while (rowIterator.hasNext()) {
+                    Cell cell = rowIterator.next().getCell(colIndex, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
+                    if (cell.getCellType() == CellType.NUMERIC) {
+                        double val = cell.getNumericCellValue();
+                        sum += val;
+                        min = Math.min(min, val);
+                        max = Math.max(max, val);
+                        count++;
+                        if (!uniqueLimitReached && uniqueValues.add(val) && uniqueValues.size() >= UNIQUE_VALUE_LIMIT) {
+                            uniqueLimitReached = true;
+                        }
+                    }
+                }
+
+                Map<String, Object> res = new LinkedHashMap<>();
+                res.put("columnName", headers.get(colIndex));
+                res.put("totalNumericRows", count);
+                if (count > 0) {
+                    res.put("sum", sum); res.put("average", sum / count);
+                    res.put("min", min); res.put("max", max);
+                    res.put("uniqueCount", uniqueValues.size());
+                    if (uniqueLimitReached) {
+                        res.put("note", "Unique count capped at " + UNIQUE_VALUE_LIMIT);
+                    }
+                }
+                return successResponse(res);
+            }
+        } catch (Exception e) {
+            return errorResponse(e);
+        }
+    }
+
+    // ========== 安全防御核心逻辑 ==========
+    private File getSafeFile(String requestedPath) throws IOException {
+        File workspace = new File(WORKSPACE_DIR);
+        if (!workspace.exists()) {
+            workspace.mkdirs();
+        }
+
+        File targetFile = new File(requestedPath);
+        if (!targetFile.getCanonicalPath().startsWith(workspace.getCanonicalPath())) {
+            throw new SecurityException("🚨 越权拦截：禁止访问工作区之外的敏感路径 -> " + targetFile.getCanonicalPath());
+        }
+        return targetFile;
+    }
+
+    // ========== 辅助与解析逻辑 ==========
     private static MapContext createJexlContext(List<String> headers, Row row) {
         MapContext context = new MapContext();
         for (int i = 0; i < headers.size(); i++) {
-            Cell cell = row.getCell(i, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
-            Object value = getCellValue(cell);
-            context.set(headers.get(i), value);
-            
-            // Also set by column letter
-            String colLetter = convertIndexToColumnLetter(i);
-            context.set("col_" + colLetter, value);
+            Object value = getCellValue(row.getCell(i, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK));
+            context.set(headers.get(i).replaceAll("\\s+", "_"), value);
+            context.set("col_" + convertIndexToColumnLetter(i), value);
         }
         return context;
     }
-    
-    private static boolean evaluateExpression(JexlExpression expression, MapContext context) throws JexlException {
-        Object result = expression.evaluate(context);
-        if (result instanceof Boolean) {
-            return (Boolean) result;
-        } else if (result instanceof Number) {
-            return ((Number) result).doubleValue() != 0.0;
-        } else if (result instanceof String) {
-            return !((String) result).isEmpty();
+
+    private static boolean evaluateExpression(JexlExpression expression, MapContext context) {
+        try {
+            Object result = expression.evaluate(context);
+            if (result instanceof Boolean) {
+                return (Boolean) result;
+            }
+            if (result instanceof Number) {
+                return ((Number) result).doubleValue() != 0.0;
+            }
+            if (result instanceof String) {
+                return !((String) result).isEmpty();
+            }
+            return false;
+        } catch (JexlException e) {
+            return false; // 静默处理单行脏数据导致的计算失败
         }
-        return false;
     }
-    
+
     private static Object getCellValue(Cell cell) {
         if (cell == null) {
             return "";
         }
-        
-        switch (cell.getCellType()) {
-            case NUMERIC:
-                if (DateUtil.isCellDateFormatted(cell)) {
-                    return cell.getDateCellValue().toString();
-                }
-                return cell.getNumericCellValue();
-            case BOOLEAN:
-                return cell.getBooleanCellValue();
-            case FORMULA:
-                try {
-                    return cell.getNumericCellValue();
-                } catch (Exception e) {
-                    try {
-                        return cell.getStringCellValue();
-                    } catch (Exception e2) {
-                        return cell.getCellFormula();
-                    }
-                }
-            case STRING:
-                return cell.getStringCellValue().trim();
-            case BLANK:
-                return "";
-            default:
-                return "";
-        }
+        return switch (cell.getCellType()) {
+            case NUMERIC -> DateUtil.isCellDateFormatted(cell) ? cell.getDateCellValue().toString() : cell.getNumericCellValue();
+            case BOOLEAN -> cell.getBooleanCellValue();
+            case STRING -> cell.getStringCellValue().trim();
+            case FORMULA -> {
+                try { yield cell.getNumericCellValue(); }
+                catch (Exception e) { yield cell.getStringCellValue(); }
+            }
+            default -> "";
+        };
     }
-    
+
     private static String getCellValueAsString(Cell cell) {
         Object value = getCellValue(cell);
         return value != null ? value.toString() : "";
     }
-    
-    private static int convertColumnLetterToIndex(String columnLetter) {
-        int index = 0;
-        for (int i = 0; i < columnLetter.length(); i++) {
-            char c = columnLetter.charAt(i);
-            index = index * 26 + (c - 'A' + 1);
+
+    private static void copyCellValue(Cell srcCell, Cell destCell) {
+        if (srcCell == null) {
+            return;
         }
-        return index - 1; // Zero-based
+        switch (srcCell.getCellType()) {
+            case STRING -> destCell.setCellValue(srcCell.getStringCellValue());
+            case NUMERIC -> destCell.setCellValue(srcCell.getNumericCellValue());
+            case BOOLEAN -> destCell.setCellValue(srcCell.getBooleanCellValue());
+            case FORMULA -> destCell.setCellFormula(srcCell.getCellFormula());
+            default -> destCell.setCellValue(srcCell.toString());
+        }
     }
-    
+
+    private static int convertColumnLetterToIndex(String letter) {
+        int index = 0;
+        for (int i = 0; i < letter.length(); i++) {
+            index = index * 26 + (letter.charAt(i) - 'A' + 1);
+        }
+        return index - 1;
+    }
+
     private static String convertIndexToColumnLetter(int index) {
         StringBuilder sb = new StringBuilder();
-        index++; // Convert to 1-based
+        index++;
         while (index > 0) {
-            int remainder = (index - 1) % 26;
-            sb.append((char) ('A' + remainder));
+            sb.append((char) ('A' + (index - 1) % 26));
             index = (index - 1) / 26;
         }
         return sb.reverse().toString();
     }
-    
-    private static String successResponse(ObjectNode data) throws JsonProcessingException {
-        ObjectNode response = mapper.createObjectNode();
-        response.put("success", true);
-        response.set("data", data);
-        return mapper.writeValueAsString(response);
+
+    private static Map<String, Object> successResponse(Map<String, Object> data) {
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("success", true);
+        res.put("data", data);
+        return res;
     }
-    
-    private static String errorResponse(String message) {
-        try {
-            ObjectNode response = mapper.createObjectNode();
-            response.put("success", false);
-            response.put("error", message);
-            return mapper.writeValueAsString(response);
-        } catch (JsonProcessingException e) {
-            return "{\"success\":false,\"error\":\"Failed to serialize error response\"}";
-        }
+
+    private static Map<String, Object> errorResponse(Exception e) {
+        System.err.println("[SheetMind Error] " + e.getMessage());
+        return Map.of("success", false, "error", e.getMessage());
     }
-    
-    /**
-     * Main entry point for MCP stdio server
-     */
+
+    // ========== 程序入口 ==========
     public static void main(String[] args) {
-        try {
-            McpServers.run(SheetMindServer.class, args);
-        } catch (Exception e) {
-            System.err.println("SheetMind server error: " + e.getMessage());
-            e.printStackTrace();
-            System.exit(1);
-        }
+        System.err.println("🚀 SheetMind Server (Enterprise) Started...");
+        System.err.println("🔒 Workspace Locked to: " + WORKSPACE_DIR);
+// 1. 直接在代码里实例化 Builder，告别外部配置文件！
+        McpServerConfiguration.Builder configBuilder = McpServerConfiguration.builder()
+                .name("sheetmind-server")
+                .version("1.0.0");
+
+        McpServers.run(SheetMindServer.class, args).startStdioServer(configBuilder);
     }
 }

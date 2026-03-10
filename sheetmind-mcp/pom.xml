@@ -17,13 +17,22 @@
     <maven.compiler.source>17</maven.compiler.source>
     <maven.compiler.target>17</maven.compiler.target>
     <poi.version>5.2.5</poi.version>
-    <excel-streaming-reader.version>2.1.0</excel-streaming-reader.version>
-    <jackson.version>2.17.1</jackson.version>
     <jexl.version>3.3</jexl.version>
   </properties>
 
   <dependencies>
-    <!-- Apache POI for Excel streaming write (SXSSF) -->
+    <dependency>
+      <groupId>io.github.thought2code</groupId>
+      <artifactId>mcp-annotated-java-sdk</artifactId>
+      <version>0.13.0</version>
+    </dependency>
+
+    <dependency>
+      <groupId>com.github.pjfanning</groupId>
+      <artifactId>excel-streaming-reader</artifactId>
+      <version>5.2.0</version>
+    </dependency>
+
     <dependency>
       <groupId>org.apache.poi</groupId>
       <artifactId>poi</artifactId>
@@ -34,45 +43,19 @@
       <artifactId>poi-ooxml</artifactId>
       <version>${poi.version}</version>
     </dependency>
-    <dependency>
-      <groupId>org.apache.poi</groupId>
-      <artifactId>poi-ooxml-lite</artifactId>
-      <version>${poi.version}</version>
-    </dependency>
-    
-    <!-- Excel Streaming Reader for streaming read -->
-    <dependency>
-      <groupId>com.monitorjbl</groupId>
-      <artifactId>xlsx-streamer</artifactId>
-      <version>${excel-streaming-reader.version}</version>
-    </dependency>
-    
-    <!-- MCP Annotated Java SDK -->
-    <dependency>
-      <groupId>io.github.thought2code</groupId>
-      <artifactId>mcp-annotated-java-sdk</artifactId>
-      <version>0.13.0</version>
-    </dependency>
-    
-    <!-- Apache JEXL for expression evaluation -->
+
     <dependency>
       <groupId>org.apache.commons</groupId>
       <artifactId>commons-jexl3</artifactId>
       <version>${jexl.version}</version>
     </dependency>
-    
-    <!-- Jackson for JSON serialization -->
+
     <dependency>
-      <groupId>com.fasterxml.jackson.core</groupId>
-      <artifactId>jackson-databind</artifactId>
-      <version>${jackson.version}</version>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-simple</artifactId>
+      <version>2.0.9</version>
     </dependency>
-    <dependency>
-      <groupId>com.fasterxml.jackson.core</groupId>
-      <artifactId>jackson-core</artifactId>
-      <version>${jackson.version}</version>
-    </dependency>
-    
+
     <!-- Testing -->
     <dependency>
       <groupId>junit</groupId>
