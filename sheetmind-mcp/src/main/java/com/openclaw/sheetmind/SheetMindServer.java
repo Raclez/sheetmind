@@ -52,13 +52,8 @@ public class SheetMindServer {
         sandbox.allow(Boolean.class.getName());
         sandbox.allow(Pattern.class.getName());
 
-        // 注册自定义函数库，命名空间为 "utils"
-        Map<String, Object> functions = new HashMap<>();
-        functions.put("utils", new SheetMindUtils());
-
         JEXL_ENGINE = new JexlBuilder()
                 .sandbox(sandbox)
-                .namespaces(functions) // 注入命名空间
                 .strict(true)
                 .silent(false)
                 .cache(512)
@@ -104,7 +99,9 @@ public class SheetMindServer {
     }
 
     // ========== 工具 1: 结构探测 ==========
-    @McpTool(name = "inspect_spreadsheet", description = "获取工作表元数据和前 5 行预览，以便编写准确的 JEXL 筛选条件")
+    @McpTool(name = "inspect_spreadsheet", description = "获取 Excel 工作表元数据和前 5 行预览数据。\n" +
+            "【AI 调用时机】：在进行任何搜索或修改前，必须先调用此工具了解该表有哪些精确的列名（headers）！\n" +
+            "【提示】：它能帮你确认日期是否带有特殊格式，以及列名的确切叫法（如是否有空格）。")
     public Map<String, Object> inspectSpreadsheet(
             @McpToolParam(name = "filePath", description = "Excel文件绝对路径") String filePath,
             @McpToolParam(name = "sheetName", description = "Sheet名称，不指定则默认第一个") String sheetName) {
@@ -136,11 +133,17 @@ public class SheetMindServer {
                     previewRows.add(rowData);
                 }
 
+        // 构建列字母映射表，方便 AI 写 JEXL
+                Map<String, String> columnMapping = new LinkedHashMap<>();
+                for (int i = 0; i < headers.size(); i++) {
+                    columnMapping.put("col_" + convertIndexToColumnLetter(i), headers.get(i));
+                }
                 return Map.of(
                         "success", true,
                         "fileName", file.getName(),
                         "sheetName", sheet.getSheetName(),
                         "previewRowCount", rowCount,
+                        "columnMapping", columnMapping, // 新增这一行：把映射表发给 AI
                         "headers", headers,
                         "preview", previewRows,
                         "note", "流式读取，此为前置预览。若需查找完整数据请调用 smart_search_rows。"
@@ -153,12 +156,12 @@ public class SheetMindServer {
 
     // ========== 工具 2: 智能流式检索 ==========
     @McpTool(name = "smart_search_rows", description = "使用 JEXL 引擎流式检索 Excel 数据行。\n" +
-            "【⚠️ 严格语法警告：必须使用 Java 语法，绝不能使用 SQL/Python 语法！】\n" +
-            "1. 逻辑操作符：必须使用 && (与) 和 || (或)，严禁使用 and / or。\n" +
-            "2. 字符串匹配：必须使用变量方法调用，如 资产类型.contains('黄金')，严禁使用 SQL 的 like 或单独的 contains 关键字。\n" +
-            "3. 正则/高级匹配：可调用预置函数 utils:match(资产类型, '.*黄金.*')。\n" +
-            "4. 判空：utils:isEmpty(列名)。\n" +
-            "【正确示例】：资产类型.contains('黄金') && 交易金额 > 3000")
+            "【🚨 语法红线：仅限纯 Java 表达式，禁用 SQL/Python 及中文变量】\n" +
+            "1. 列名引用：必须先调用 inspect_spreadsheet 获取 columnMapping，强制使用 `col_字母`（如 col_A），严禁写入中文。\n" +
+            "2. 逻辑运算：仅支持 && (与) 和 || (或)，严禁 and / or。\n" +
+            "3. 文本搜索：强制使用原生 Java 字符串方法，如 col_A.toString().matches('.*关键字.*')。\n" +
+            "4. 数值比较：col_B > 1000, col_C == '精确值'。\n" +
+            "【完美示例】：col_C.toString().matches('.*黄金.*') && col_E > 3000")
     public Map<String, Object> smartSearchRows(
             @McpToolParam(name = "filePath", description = "Excel文件绝对路径") String filePath,
             @McpToolParam(name = "query", description = "JEXL查询表达式") String query,
@@ -226,8 +229,12 @@ public class SheetMindServer {
     // 定义大文件阈值：30MB (约等于四五十万行，再大极易 OOM)
     private static final long LARGE_FILE_THRESHOLD = 30 * 1024 * 1024L;
 
-    @McpTool(name = "update_cell", description = "精准更新特定单元格。注意：为保护系统内存，不支持修改大于 30MB 的超大文件。")
-    public Map<String, Object> updateCell(
+    @McpTool(name = "update_cell", description = "精准更新特定单元格。注意：为保护系统内存，不支持修改大于 30MB 的文件。\n" +
+            "【⚠️ 致命警告：索引机制】\n" +
+            "传入的 row 和 col 必须是基于 0 的程序索引 (0-based index)！\n" +
+            " - row 索引：Excel 的第 1 行（通常是表头）row=0；第 2 行 row=1。\n" +
+            " - col 索引：Excel 的 A 列 col=0；B 列 col=1；C 列 col=2。\n" +
+            "【举例】：如果要修改 Excel 中第 2 行、C 列的数据，必须传入 row: 1, col: 2。请在内部计算好再调用。")    public Map<String, Object> updateCell(
             @McpToolParam(name = "filePath", description = "Excel文件绝对路径") String filePath,
             @McpToolParam(name = "row", description = "行索引") int row,
             @McpToolParam(name = "col", description = "列索引") int col,
@@ -276,7 +283,9 @@ public class SheetMindServer {
     }
 
     // ========== 工具 4: 数据统计分析 ==========
-    @McpTool(name = "summarize_column", description = "计算指定数值列的统计信息...")
+    @McpTool(name = "summarize_column", description = "计算指定数值列的统计信息（总和、平均值、最大最小值等）。\n" +
+            "【参数建议】：为了最高准确率，column 参数请直接传入你看过的汉字/英文『列名』(例如 '交易金额'、'浮动盈亏')，不要传数字索引。\n" +
+            "【特性】：它会自动跳过该列中的文本或脏数据，只对有效数字进行计算。")
     public Map<String, Object> summarizeColumn(
             @McpToolParam(name = "filePath", description = "Excel文件绝对路径") String filePath,
             @McpToolParam(name = "column", description = "列标识") String column,
@@ -471,38 +480,6 @@ public class SheetMindServer {
     private static Map<String, Object> errorResponse(Exception e) {
         System.err.println("[SheetMind Error] " + e.getMessage());
         return Map.of("success", false, "error", e.getMessage());
-    }
-
-    // ========== JEXL 自定义业务函数库 ==========
-    public static class SheetMindUtils {
-
-        /** 正则模糊匹配: query="utils:match(col_A, '.*黄金.*')" */
-        public boolean match(Object value, String regex) {
-            if (value == null) return false;
-            return value.toString().matches(regex);
-        }
-
-        /** 日期对比 (判断单元格日期是否在某个字符串日期之后) */
-        public boolean isAfter(Object cellValue, String targetDateStr) {
-            if (cellValue == null || cellValue.toString().isBlank()) return false;
-            try {
-                // 简单的字符串字典序对比 (前提是 DataFormatter 输出的是 yyyy-MM-dd 格式)
-                // 复杂业务中这里可以引入 LocalDate 解析
-                return cellValue.toString().compareTo(targetDateStr) > 0;
-            } catch (Exception e) {
-                return false;
-            }
-        }
-
-        /** 判空检查 */
-        public boolean isEmpty(Object value) {
-            return value == null || value.toString().trim().isEmpty();
-        }
-
-        /** 文本长度判断 */
-        public int length(Object value) {
-            return value == null ? 0 : value.toString().length();
-        }
     }
 
     // ========== 程序入口 ==========
