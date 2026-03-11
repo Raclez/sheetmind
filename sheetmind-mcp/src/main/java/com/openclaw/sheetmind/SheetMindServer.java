@@ -8,9 +8,11 @@ import com.github.thought2code.mcp.annotated.annotation.McpTool;
 import com.github.thought2code.mcp.annotated.annotation.McpToolParam;
 import com.github.thought2code.mcp.annotated.configuration.McpServerConfiguration;
 import org.apache.commons.jexl3.introspection.JexlSandbox;
+import java.util.regex.Pattern;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.streaming.SXSSFWorkbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.apache.poi.openxml4j.opc.OPCPackage;
 import org.apache.commons.jexl3.*;
 import org.apache.commons.jexl3.JexlExpression;
 import org.apache.commons.jexl3.MapContext;
@@ -31,6 +33,7 @@ public class SheetMindServer {
     // ========== 核心安全与性能配置 ==========
     // 强制限制大模型的读写范围，防止读取系统密码或敏感配置
     private static final String WORKSPACE_DIR = System.getProperty("user.home") + File.separator + "SheetMind_Workspace";
+    private static final List<String> ALLOWED_DIRECTORIES = new ArrayList<>();
     private static final int UNIQUE_VALUE_LIMIT = 10000;
     private static final int DEFAULT_SEARCH_LIMIT = 20;
     private static final int STREAMING_ROW_CACHE_SIZE = 100;
@@ -38,21 +41,77 @@ public class SheetMindServer {
     private static final DataFormatter DATA_FORMATTER = new DataFormatter();
 
     // 🔒 JEXL 安全沙箱配置：只允许基础字符串和数学操作，彻底阻断 RCE 注入
+    // 支持操作：> < == != >= <= && || 以及字符串方法调用 (name.contains("x"), name.toUpperCase() 等)
     private static final JexlEngine JEXL_ENGINE;
     static {
         JexlSandbox sandbox = new JexlSandbox(false);
         sandbox.allow(String.class.getName());
         sandbox.allow(Math.class.getName());
-        JEXL_ENGINE = new JexlBuilder().sandbox(sandbox).strict(true).silent(false).cache(512).create();
+        sandbox.allow(Integer.class.getName());
+        sandbox.allow(Double.class.getName());
+        sandbox.allow(Boolean.class.getName());
+        sandbox.allow(Pattern.class.getName());
+
+        // 注册自定义函数库，命名空间为 "utils"
+        Map<String, Object> functions = new HashMap<>();
+        functions.put("utils", new SheetMindUtils());
+
+        JEXL_ENGINE = new JexlBuilder()
+                .sandbox(sandbox)
+                .namespaces(functions) // 注入命名空间
+                .strict(true)
+                .silent(false)
+                .cache(512)
+                .create();
+    }
+
+    private Sheet getSheet(Workbook workbook, String sheetName, Integer sheetIndex) {
+        if (sheetName != null && !sheetName.isBlank()) {
+            Sheet sheet = workbook.getSheet(sheetName);
+            if (sheet == null) {
+                throw new IllegalArgumentException("Sheet not found: " + sheetName);
+            }
+            return sheet;
+        } else if (sheetIndex != null) {
+            int maxIndex = workbook.getNumberOfSheets() - 1;
+            if (sheetIndex < 0 || sheetIndex > maxIndex) {
+                throw new IllegalArgumentException("Sheet index out of range. Available: 0-" + maxIndex);
+            }
+            return workbook.getSheetAt(sheetIndex);
+        }
+        return workbook.getSheetAt(0);
+    }
+
+    // ========== 工具 0: 列出所有 Sheet ==========
+    @McpTool(name = "list_sheets", description = "列出Excel文件中的所有Sheet名称")
+    public Map<String, Object> listSheets(@McpToolParam(name = "filePath", description = "Excel文件绝对路径") String filePath) {
+        try {
+            File file = getSafeFile(filePath);
+            try (Workbook workbook = StreamingReader.builder().rowCacheSize(100).open(file)) {
+                List<String> sheetNames = new ArrayList<>();
+                for (int i = 0; i < workbook.getNumberOfSheets(); i++) {
+                    sheetNames.add(workbook.getSheetAt(i).getSheetName());
+                }
+                return successResponse(Map.of(
+                        "fileName", file.getName(),
+                        "sheetCount", workbook.getNumberOfSheets(),
+                        "sheetNames", sheetNames
+                ));
+            }
+        } catch (Exception e) {
+            return errorResponse(e);
+        }
     }
 
     // ========== 工具 1: 结构探测 ==========
     @McpTool(name = "inspect_spreadsheet", description = "获取工作表元数据和前 5 行预览，以便编写准确的 JEXL 筛选条件")
-    public Map<String, Object> inspectSpreadsheet(@McpToolParam(name = "filePath", description = "Excel文件绝对路径") String  filePath) {
+    public Map<String, Object> inspectSpreadsheet(
+            @McpToolParam(name = "filePath", description = "Excel文件绝对路径") String filePath,
+            @McpToolParam(name = "sheetName", description = "Sheet名称，不指定则默认第一个") String sheetName) {
         try {
             File file = getSafeFile(filePath);
             try (Workbook workbook = StreamingReader.builder().rowCacheSize(100).open(file)) {
-                Sheet sheet = workbook.getSheetAt(0);
+                Sheet sheet = getSheet(workbook, sheetName, null);
                 Iterator<Row> rowIterator = sheet.iterator();
                 List<Map<String, Object>> previewRows = new ArrayList<>();
                 List<String> headers = new ArrayList<>();
@@ -93,11 +152,18 @@ public class SheetMindServer {
     }
 
     // ========== 工具 2: 智能流式检索 ==========
-    @McpTool(name = "smart_search_rows", description = "带有 JEXL 逻辑引擎的流式检索...")
+    @McpTool(name = "smart_search_rows", description = "使用 JEXL 引擎流式检索 Excel 数据行。\n" +
+            "【⚠️ 严格语法警告：必须使用 Java 语法，绝不能使用 SQL/Python 语法！】\n" +
+            "1. 逻辑操作符：必须使用 && (与) 和 || (或)，严禁使用 and / or。\n" +
+            "2. 字符串匹配：必须使用变量方法调用，如 资产类型.contains('黄金')，严禁使用 SQL 的 like 或单独的 contains 关键字。\n" +
+            "3. 正则/高级匹配：可调用预置函数 utils:match(资产类型, '.*黄金.*')。\n" +
+            "4. 判空：utils:isEmpty(列名)。\n" +
+            "【正确示例】：资产类型.contains('黄金') && 交易金额 > 3000")
     public Map<String, Object> smartSearchRows(
             @McpToolParam(name = "filePath", description = "Excel文件绝对路径") String filePath,
             @McpToolParam(name = "query", description = "JEXL查询表达式") String query,
-            @McpToolParam(name = "pagination", description = "分页参数") Map<String, Integer> pagination) {
+            @McpToolParam(name = "pagination", description = "分页参数") Map<String, Integer> pagination,
+            @McpToolParam(name = "sheetName", description = "Sheet名称，不指定则默认第一个") String sheetName) {
         try {
             File file = getSafeFile(filePath);
             int limit = pagination != null ? pagination.getOrDefault("limit", DEFAULT_SEARCH_LIMIT) : DEFAULT_SEARCH_LIMIT;
@@ -106,7 +172,7 @@ public class SheetMindServer {
             JexlExpression expression = (query != null && !query.isBlank()) ? JEXL_ENGINE.createExpression(query) : null;
 
             try (Workbook workbook = StreamingReader.builder().rowCacheSize(100).open(file)) {
-                Sheet sheet = workbook.getSheetAt(0);
+                Sheet sheet = getSheet(workbook, sheetName, null);
                 Iterator<Row> rowIterator = sheet.iterator();
 
                 List<String> headers = new ArrayList<>();
@@ -157,73 +223,48 @@ public class SheetMindServer {
     }
 
     // ========== 工具 3: 原子无内存泄漏修改 (Stream-Copy-Append) ==========
-    @McpTool(name = "update_cell", description = "精准更新特定单元格...")
+    // 定义大文件阈值：30MB (约等于四五十万行，再大极易 OOM)
+    private static final long LARGE_FILE_THRESHOLD = 30 * 1024 * 1024L;
+
+    @McpTool(name = "update_cell", description = "精准更新特定单元格。注意：为保护系统内存，不支持修改大于 30MB 的超大文件。")
     public Map<String, Object> updateCell(
             @McpToolParam(name = "filePath", description = "Excel文件绝对路径") String filePath,
             @McpToolParam(name = "row", description = "行索引") int row,
             @McpToolParam(name = "col", description = "列索引") int col,
-            @McpToolParam(name = "value", description = "新值") String value) {
+            @McpToolParam(name = "value", description = "新值") String value,
+            @McpToolParam(name = "sheetName", description = "Sheet名称，不指定则默认第一个") String sheetName) {
         try {
             File safeFile = getSafeFile(filePath);
+
+            // 🚨 真正的防 OOM 策略：体积熔断
+            if (safeFile.length() > LARGE_FILE_THRESHOLD) {
+                return Map.of(
+                        "success", false,
+                        "error", String.format("文件过大 (%.1f MB)。为防止服务器内存溢出，拒绝执行 update_cell。请手动修改或使用 Python 脚本处理。",
+                                safeFile.length() / (1024.0 * 1024.0))
+                );
+            }
+
             File backupPath = new File(safeFile.getAbsolutePath() + ".bak");
             File tempPath = new File(safeFile.getAbsolutePath() + ".tmp");
 
-            // 1. 创建备份
             Files.copy(safeFile.toPath(), backupPath.toPath(), StandardCopyOption.REPLACE_EXISTING);
 
-            // 2. 双流搬运模式 (O(1) 内存消耗，彻底摒弃 XSSFWorkbook)
-            try (InputStream is = new FileInputStream(safeFile);
-                 Workbook readWb = StreamingReader.builder().rowCacheSize(100).open(is);
-                 SXSSFWorkbook writeWb = new SXSSFWorkbook(100);
+            // 直接传入 safeFile，底层已是最优的 OPCPackage 随机访问模式
+            try (XSSFWorkbook writeWb = new XSSFWorkbook(safeFile);
                  FileOutputStream fos = new FileOutputStream(tempPath)) {
 
-                Sheet readSheet = readWb.getSheetAt(0);
-                Sheet writeSheet = writeWb.createSheet(readSheet.getSheetName());
-                Iterator<Row> rowIterator = readSheet.iterator();
-                int currentRowIndex = 0;
-
-                while (rowIterator.hasNext()) {
-                    Row readRow = rowIterator.next();
-                    int logicalRowNum = readRow.getRowNum();
-
-                    // 补齐被流式读取器跳过的空行
-                    while (currentRowIndex < logicalRowNum) {
-                        if (currentRowIndex == row) {
-                            writeSheet.createRow(currentRowIndex).createCell(col).setCellValue(value);
-                        }
-                        currentRowIndex++;
-                    }
-
-                    Row writeRow = writeSheet.createRow(logicalRowNum);
-                    currentRowIndex = logicalRowNum + 1;
-
-                    // 拷贝单元格，并在命中目标坐标时进行值替换
-                    int maxCol = Math.max((int) readRow.getLastCellNum(), col + 1);
-                    for (int c = 0; c < maxCol; c++) {
-                        if (logicalRowNum == row && c == col) {
-                            writeRow.createCell(c).setCellValue(value);
-                        } else {
-                            Cell readCell = readRow.getCell(c);
-                            if (readCell != null) {
-                                copyCellValue(readCell, writeRow.createCell(c));
-                            }
-                        }
-                    }
+                Sheet targetSheet = getSheet(writeWb, sheetName, null);
+                Row targetRow = targetSheet.getRow(row);
+                if (targetRow == null) {
+                    targetRow = targetSheet.createRow(row);
                 }
-
-                // 如果目标行在文件物理尾部之外，追加新行
-                while (currentRowIndex <= row) {
-                    if (currentRowIndex == row) {
-                        writeSheet.createRow(currentRowIndex).createCell(col).setCellValue(value);
-                    }
-                    currentRowIndex++;
-                }
+                Cell cell = targetRow.getCell(col, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
+                cell.setCellValue(value);
 
                 writeWb.write(fos);
-                writeWb.dispose(); // 清理磁盘碎片
             }
 
-            // 3. 原子替换
             Files.move(tempPath.toPath(), safeFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
             Files.deleteIfExists(backupPath.toPath());
 
@@ -238,11 +279,12 @@ public class SheetMindServer {
     @McpTool(name = "summarize_column", description = "计算指定数值列的统计信息...")
     public Map<String, Object> summarizeColumn(
             @McpToolParam(name = "filePath", description = "Excel文件绝对路径") String filePath,
-            @McpToolParam(name = "column", description = "列标识") String column) {
+            @McpToolParam(name = "column", description = "列标识") String column,
+            @McpToolParam(name = "sheetName", description = "Sheet名称，不指定则默认第一个") String sheetName) {
         try {
             File safeFile = getSafeFile(filePath);
-            try (Workbook workbook = new XSSFWorkbook(safeFile)) {
-                Sheet sheet = workbook.getSheetAt(0);
+            try (Workbook workbook = StreamingReader.builder().rowCacheSize(STREAMING_ROW_CACHE_SIZE).open(safeFile)) {
+                Sheet sheet = getSheet(workbook, sheetName, null);
                 Iterator<Row> rowIterator = sheet.iterator();
 
                 List<String> headers = new ArrayList<>();
@@ -252,9 +294,17 @@ public class SheetMindServer {
                     }
                 }
 
-                int colIndex = column.matches("[A-Za-z]+") ? convertColumnLetterToIndex(column.toUpperCase()) : Integer.parseInt(column);
+                int colIndex = -1;
+                if (column.matches("\\d+")) {
+                    colIndex = Integer.parseInt(column); // 支持传数字 "1"
+                } else if (column.matches("[A-Za-z]+")) {
+                    colIndex = convertColumnLetterToIndex(column.toUpperCase()); // 支持传字母 "B"
+                } else {
+                    colIndex = headers.indexOf(column); // 支持传列名 "价格"
+                }
+
                 if (colIndex < 0 || colIndex >= headers.size()) {
-                    throw new IllegalArgumentException("Column index out of range.");
+                    throw new IllegalArgumentException("无法识别的列标识，或列索引超出范围: " + column);
                 }
 
                 double sum = 0.0, min = Double.MAX_VALUE, max = Double.MIN_VALUE;
@@ -294,16 +344,22 @@ public class SheetMindServer {
         }
     }
 
-    // ========== 安全防御核心逻辑 ==========
+    // ========== 安全防御核心逻辑 (升级版：多目录匹配) ==========
     private File getSafeFile(String requestedPath) throws IOException {
-        File workspace = new File(WORKSPACE_DIR);
-        if (!workspace.exists()) {
-            workspace.mkdirs();
+        File targetFile = new File(requestedPath);
+        String targetCanonicalPath = targetFile.getCanonicalPath();
+
+        boolean isAllowed = false;
+        for (String allowedDir : ALLOWED_DIRECTORIES) {
+            if (targetCanonicalPath.startsWith(allowedDir)) {
+                isAllowed = true;
+                break;
+            }
         }
 
-        File targetFile = new File(requestedPath);
-        if (!targetFile.getCanonicalPath().startsWith(workspace.getCanonicalPath())) {
-            throw new SecurityException("🚨 越权拦截：禁止访问工作区之外的敏感路径 -> " + targetFile.getCanonicalPath());
+        if (!isAllowed) {
+            throw new SecurityException("🚨 越权拦截：禁止访问授权工作区之外的路径 -> " + targetCanonicalPath +
+                    "\n当前允许的目录有: " + ALLOWED_DIRECTORIES);
         }
         return targetFile;
     }
@@ -417,10 +473,72 @@ public class SheetMindServer {
         return Map.of("success", false, "error", e.getMessage());
     }
 
+    // ========== JEXL 自定义业务函数库 ==========
+    public static class SheetMindUtils {
+
+        /** 正则模糊匹配: query="utils:match(col_A, '.*黄金.*')" */
+        public boolean match(Object value, String regex) {
+            if (value == null) return false;
+            return value.toString().matches(regex);
+        }
+
+        /** 日期对比 (判断单元格日期是否在某个字符串日期之后) */
+        public boolean isAfter(Object cellValue, String targetDateStr) {
+            if (cellValue == null || cellValue.toString().isBlank()) return false;
+            try {
+                // 简单的字符串字典序对比 (前提是 DataFormatter 输出的是 yyyy-MM-dd 格式)
+                // 复杂业务中这里可以引入 LocalDate 解析
+                return cellValue.toString().compareTo(targetDateStr) > 0;
+            } catch (Exception e) {
+                return false;
+            }
+        }
+
+        /** 判空检查 */
+        public boolean isEmpty(Object value) {
+            return value == null || value.toString().trim().isEmpty();
+        }
+
+        /** 文本长度判断 */
+        public int length(Object value) {
+            return value == null ? 0 : value.toString().length();
+        }
+    }
+
     // ========== 程序入口 ==========
     public static void main(String[] args) {
         System.err.println("🚀 SheetMind Server (Enterprise) Started...");
-        System.err.println("🔒 Workspace Locked to: " + WORKSPACE_DIR);
+        // 解析命令行传入的目录路径作为安全白名单
+        for (String arg : args) {
+            File dir = new File(arg);
+            if (dir.exists() && dir.isDirectory()) {
+                try {
+                    // 统一转换为绝对路径形式存入白名单
+                    String canonicalPath = dir.getCanonicalPath();
+                    // 确保路径以分隔符结尾，防止 /data/app 误匹配 /data/apple
+                    if (!canonicalPath.endsWith(File.separator)) {
+                        canonicalPath += File.separator;
+                    }
+                    ALLOWED_DIRECTORIES.add(canonicalPath);
+                } catch (IOException e) {
+                    System.err.println("⚠️ 无法解析授权路径: " + arg);
+                }
+            }
+        }
+
+        // 兜底机制：如果没传任何参数，默认放开整个用户主目录 (Convention over Configuration)
+        if (ALLOWED_DIRECTORIES.isEmpty()) {
+            try {
+                // 获取类似 /Users/ryu/ 的路径作为默认工作区
+                String defaultDir = new File(System.getProperty("user.home")).getCanonicalPath() + File.separator;
+                ALLOWED_DIRECTORIES.add(defaultDir);
+                System.err.println("💡 未指定工作区参数，已采用默认配置：允许访问整个用户主目录 -> " + defaultDir);
+            } catch (IOException e) {
+                System.err.println("⚠️ 默认工作区初始化失败");
+            }
+        } else {
+            System.err.println("🔒 已锁定安全工作区: " + ALLOWED_DIRECTORIES);
+        }
 // 1. 直接在代码里实例化 Builder，告别外部配置文件！
         McpServerConfiguration.Builder configBuilder = McpServerConfiguration.builder()
                 .name("sheetmind-server")
