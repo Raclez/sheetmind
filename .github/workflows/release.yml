@@ -63,11 +63,12 @@ jobs:
           export GRAALVM_HOME=$JAVA_HOME
           mvn -f sheetmind-mcp/pom.xml package -Pnative -DskipTests
 
-      - name: Upload Linux Native
+      - name: Rename and Upload Linux Native
+        run: mv sheetmind-mcp/target/sheetmind sheetmind-linux
         uses: actions/upload-artifact@v4
         with:
           name: sheetmind-linux
-          path: sheetmind-mcp/target/sheetmind
+          path: sheetmind-linux
 
   build-native-macos:
     needs: release-please
@@ -87,11 +88,12 @@ jobs:
           export GRAALVM_HOME=$JAVA_HOME
           mvn -f sheetmind-mcp/pom.xml package -Pnative -DskipTests
 
-      - name: Upload macOS Native
+      - name: Rename and Upload macOS Native
+        run: mv sheetmind-mcp/target/sheetmind sheetmind-macos
         uses: actions/upload-artifact@v4
         with:
           name: sheetmind-macos
-          path: sheetmind-mcp/target/sheetmind
+          path: sheetmind-macos
 
   build-native-windows:
     needs: release-please
@@ -131,31 +133,30 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: sheetmind-linux
+          path: linux
 
       - name: Download macOS Native
         uses: actions/download-artifact@v4
         with:
           name: sheetmind-macos
+          path: macos
 
       - name: Download Windows Native
         uses: actions/download-artifact@v4
         with:
           name: sheetmind-windows
+          path: windows
 
       - name: Upload to Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload ${{ needs.release-please.outputs.tag_name }} \
-          sheetmind-mcp-*.jar --clobber
+          gh release upload ${{ needs.release-please.outputs.tag_name }} *.jar --clobber
           
-          chmod +x sheetmind
-          gh release upload ${{ needs.release-please.outputs.tag_name }} \
-          sheetmind --clobber --repo "$GITHUB_REPOSITORY"
+          chmod +x linux/sheetmind-linux
+          gh release upload ${{ needs.release-please.outputs.tag_name }} linux/sheetmind-linux --clobber
           
-          chmod +x sheetmind
-          gh release upload ${{ needs.release-please.outputs.tag_name }} \
-          sheetmind-macos --clobber --repo "$GITHUB_REPOSITORY"
+          chmod +x macos/sheetmind-macos
+          gh release upload ${{ needs.release-please.outputs.tag_name }} macos/sheetmind-macos --clobber
           
-          gh release upload ${{ needs.release-please.outputs.tag_name }} \
-          sheetmind.exe --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload ${{ needs.release-please.outputs.tag_name }} windows/sheetmind.exe --clobber
