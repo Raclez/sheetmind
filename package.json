@@ -1,6 +1,6 @@
 {
   "name": "sheetmind-mcp",
-  "version": "1.2.0",
+  "version": "1.3.1",
   "description": "SheetMind - Enterprise Excel MCP Server for AI agents. Install: npx sheetmind-mcp install",
   "bin": {
     "sheetmind-mcp": "./bin/install.js"

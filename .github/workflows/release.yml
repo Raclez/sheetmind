@@ -22,6 +22,8 @@ jobs:
           path: sheetmind-mcp
           release-type: maven
           package-name: sheetmind-mcp
+          extra-files: |
+            package.json
 
   build-jar:
     needs: release-please
@@ -63,8 +65,10 @@ jobs:
           export GRAALVM_HOME=$JAVA_HOME
           mvn -f sheetmind-mcp/pom.xml package -Pnative -DskipTests
 
-      - name: Rename and Upload Linux Native
+      - name: Rename Linux Native
         run: mv sheetmind-mcp/target/sheetmind sheetmind-linux
+
+      - name: Upload Linux Native
         uses: actions/upload-artifact@v4
         with:
           name: sheetmind-linux
@@ -88,8 +92,10 @@ jobs:
           export GRAALVM_HOME=$JAVA_HOME
           mvn -f sheetmind-mcp/pom.xml package -Pnative -DskipTests
 
-      - name: Rename and Upload macOS Native
+      - name: Rename macOS Native
         run: mv sheetmind-mcp/target/sheetmind sheetmind-macos
+
+      - name: Upload macOS Native
         uses: actions/upload-artifact@v4
         with:
           name: sheetmind-macos
@@ -151,12 +157,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload ${{ needs.release-please.outputs.tag_name }} *.jar --clobber
+          ls -la
+          
+          gh release upload "${{ needs.release-please.outputs.tag_name }}" sheetmind-mcp-*.jar --clobber
           
           chmod +x linux/sheetmind-linux
-          gh release upload ${{ needs.release-please.outputs.tag_name }} linux/sheetmind-linux --clobber
+          gh release upload "${{ needs.release-please.outputs.tag_name }}" linux/sheetmind-linux --clobber
           
           chmod +x macos/sheetmind-macos
-          gh release upload ${{ needs.release-please.outputs.tag_name }} macos/sheetmind-macos --clobber
+          gh release upload "${{ needs.release-please.outputs.tag_name }}" macos/sheetmind-macos --clobber
           
-          gh release upload ${{ needs.release-please.outputs.tag_name }} windows/sheetmind.exe --clobber
+          gh release upload "${{ needs.release-please.outputs.tag_name }}" windows/sheetmind.exe --clobber
