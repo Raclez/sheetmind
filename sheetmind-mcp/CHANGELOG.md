@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/Raclez/sheetmind/compare/v1.3.0...v1.4.0) (2026-03-12)
+
+
+### Features
+
+* **build:** 添加 GraalVM 原生镜像构建支持并优化 README 文档 ([c6f05e3](https://github.com/Raclez/sheetmind/commit/c6f05e3f6b5263e8f84742a785224aeab915906c))
+
 ## [1.3.0](https://github.com/Raclez/sheetmind/compare/v1.2.0...v1.3.0) (2026-03-11)
 
 
