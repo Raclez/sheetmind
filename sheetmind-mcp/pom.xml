@@ -75,7 +75,7 @@
           <target>21</target>
         </configuration>
       </plugin>
-      
+
       <!-- Create executable fat JAR -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
@@ -103,4 +103,44 @@
       </plugin>
     </plugins>
   </build>
+
+  <!-- GraalVM Native Image profile (optional) -->
+  <!-- Build with: mvn package -Pnative -->
+  <!-- Requires: GRAALVM_HOME set and native-image installed -->
+  <profiles>
+    <profile>
+      <id>native</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.graalvm.buildtools</groupId>
+            <artifactId>native-maven-plugin</artifactId>
+            <version>0.9.28</version>
+            <extensions>true</extensions>
+            <executions>
+              <execution>
+                <id>build-native</id>
+                <phase>package</phase>
+                <goals>
+                  <goal>build</goal>
+                </goals>
+              </execution>
+            </executions>
+            <configuration>
+              <mainClass>com.openclaw.sheetmind.SheetMindServer</mainClass>
+              <imageName>sheetmind</imageName>
+              <buildArgs>
+                <buildArg>--no-fallback</buildArg>
+                <buildArg>--initialize-at-build-time=com.openclaw.sheetmind</buildArg>
+                <buildArg>--initialize-at-build-time=org.apache.poi</buildArg>
+                <buildArg>--initialize-at-build-time=org.apache.commons.jexl3</buildArg>
+                <buildArg>--enable-http</buildArg>
+                <buildArg>--enable-https</buildArg>
+              </buildArgs>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>

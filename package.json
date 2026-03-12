@@ -1,0 +1,19 @@
+{
+  "name": "sheetmind-mcp",
+  "version": "1.2.0",
+  "description": "SheetMind - Enterprise Excel MCP Server for AI agents. Install: npx sheetmind-mcp install",
+  "bin": {
+    "sheetmind-mcp": "./bin/install.js"
+  },
+  "scripts": {
+    "start": "node bin/install.js"
+  },
+  "keywords": ["mcp", "excel", "ai", "cursor", "claude", "sheetmind"],
+  "author": "Raclez",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Raclez/sheetmind.git"
+  },
+  "os": ["darwin", "linux", "win32"]
+}

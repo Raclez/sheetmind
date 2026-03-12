@@ -1,4 +1,4 @@
-# SheetMind - 企业级 Excel MCP 服务器 / Enterprise Excel MCP Server
+# SheetMind - 企业级 Excel MCP 服务器
 
 <p align="center">
   <img src="https://img.shields.io/badge/Java-21-blue" alt="Java 21">
@@ -8,631 +8,241 @@
 </p>
 
 <p align="center">
-  <strong>Streaming Excel processing for AI agents • 为AI智能体设计的流式Excel处理引擎</strong>
+  <strong>为 AI 智能体设计的流式 Excel 处理引擎 • 处理百万行文件如喝水般简单</strong>
 </p>
 
 ---
 
-## 📖 概述 / Overview
+## 为什么选择 SheetMind？
 
-**SheetMind** 是一个基于 **Java 21** 构建的企业级 **Model Context Protocol (MCP)** 服务器，专门为处理 **大规模 Excel 文件**（百万行级别）而设计。它解决了传统Excel处理中的 **内存溢出（OOM）**、**AI幻觉计算** 和 **上下文窗口限制** 等核心问题。
+市面上有 **164+** 个 Excel MCP 项目，但 SheetMind 是**唯一**能处理**百万行级别**文件而不崩溃的企业级解决方案。
 
-**SheetMind** is an **enterprise-grade Model Context Protocol (MCP)** server built on **Java 21**, specifically designed for processing **large-scale Excel files** (millions of rows). It addresses core issues in traditional Excel processing: **memory overflow (OOM)**, **AI hallucination calculations**, and **context window limitations**.
+### 核心优势对比
 
-### 🎯 核心价值 / Core Value Proposition
-
-| 优势 / Advantage | 描述 / Description |
-|-----------------|-------------------|
-| **内存安全**<br>**Memory Safe** | O(1) 内存复杂度，文件大小不影响内存占用<br>O(1) memory complexity, file size does not affect memory usage |
-| **流式处理**<br>**Streaming Processing** | 基于 Apache POI StreamingReader，支持百万行文件<br>Based on Apache POI StreamingReader, supports million-row files |
-| **虚拟线程**<br>**Virtual Threads** | Java 21 虚拟线程，并行查询更高效<br>Java 21 virtual threads for efficient parallel queries |
-| **智能过滤**<br>**Intelligent Filtering** | JEXL 表达式引擎，AI可用自然语言描述查询条件<br>JEXL expression engine, AI can describe queries in natural language |
-| **模糊匹配**<br>**Fuzzy Matching** | Levenshtein距离算法，解决"同名不同字"难题<br>Levenshtein distance algorithm, solves "similar but different" matching |
-| **透视分析**<br>**Pivot Analysis** | 类似Excel数据透视表，多维聚合分析<br>Like Excel pivot table, multi-dimensional aggregation |
-| **原子操作**<br>**Atomic Operations** | 自动备份与原子文件替换，保障数据安全<br>Automatic backup and atomic file replacement for data safety |
-| **标准协议**<br>**Standard Protocol** | MCP Stdio 协议，兼容 Cursor、Claude Desktop 等 AI 客户端<br>MCP Stdio protocol, compatible with Cursor and other AI clients, Claude Desktop, |
-
----
-
-## 🏗️ 架构设计 / Architecture
-
-```mermaid
-graph TB
-    subgraph "AI Client Layer"
-        A[AI Client<br/>Cursor/Claude Desktop] --> B[JSON-RPC over stdio]
-    end
-
-    subgraph "SheetMind MCP Server"
-        B --> C[Protocol Handler]
-        C --> D[Streaming Excel Processor]
-        D --> E[Apache POI StreamingReader]
-        D --> F[JEXL Expression Engine]
-        D --> G[Jackson Serialization]
-        D --> H[Virtual Thread Pool<br/>Java 21]
-    end
-
-    subgraph "Data Layer"
-        I[Excel Files<br/>.xlsx format] --> E
-        E --> J[Memory-safe Results]
-    end
-
-    J --> K[AI-ready JSON Response]
-```
-
-### 📦 技术栈 / Tech Stack
-
-| 组件 / Component | 技术选型 / Technology | 版本 / Version | 作用 / Purpose |
-|-----------------|----------------------|---------------|---------------|
-| **核心引擎**<br>**Core Engine** | Apache POI + Excel Streaming Reader | 5.2.5 | 流式读写 Excel 文件 |
-| **协议层**<br>**Protocol Layer** | mcp-annotated-java-sdk | 0.13.0 | MCP 标准协议实现 |
-| **表达式引擎**<br>**Expression Engine** | Apache JEXL 3 | 3.3 | 动态过滤表达式解析 |
-| **并行处理**<br>**Parallel Processing** | Java 21 Virtual Threads | 21 | 虚拟线程并行查询 |
-| **序列化**<br>**Serialization** | Jackson Databind | 2.17.1 | JSON 序列化/反序列化 |
-| **构建工具**<br>**Build Tool** | Maven 3.6+ | - | 项目构建与依赖管理 |
-
----
-
-## 💎 为什么选择 SheetMind？
-
-市面上有 **164+** 个 Excel MCP 项目（据 GitHub 统计），但 SheetMind 是**最独特**的存在。
-
-### 与其他项目对比
-
-| 特性 | SheetMind | 其他项目 |
-|------|-----------|----------|
-| **大文件处理** | ✅ 流式处理，百万行不OOM | ❌ 全量加载，易OOM |
-| **虚拟线程** | ✅ Java 21 虚拟线程并行 | ❌ 传统线程，资源消耗大 |
-| **模糊匹配** | ✅ Levenshtein算法 | ❌ 不支持 |
-| **数据透视** | ✅ 多维透视分析 | ❌ 不支持 |
+| 特性 | SheetMind | 其他 Excel MCP |
+|------|-----------|----------------|
+| **百万行大文件** | ✅ 流式处理，内存 <50MB | ❌ OOM 崩溃 |
+| **模糊匹配** | ✅ Levenshtein 算法 | ❌ 不支持 |
+| **数据透视** | ✅ 多维聚合分析 | ❌ 不支持 |
+| **公式计算** | ✅ 执行 Excel 原生公式 | ❌ 不支持 |
+| **虚拟线程** | ✅ Java 21 并行查询 | ❌ 串行处理 |
 | **类型推断** | ✅ 自动识别数据类型 | ❌ 手动指定 |
-| **公式计算** | ✅ 执行Excel原生公式 | ❌ 不支持 |
-| **安全沙箱** | ✅ 白名单+表达式过滤 | ❌ 几乎无 |
+| **安全沙箱** | ✅ 白名单 + 表达式过滤 | ❌ 几乎无防护 |
 | **联邦查询** | ✅ 跨目录多文件并行 | ❌ 仅单文件 |
 
-### SheetMind 的独特优势
+### SheetMind 能做什么？
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  🚀 别人做不到的，我们做到了                                 │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  💾 内存安全                                               │
-│     100万行Excel文件，传统方案直接崩溃                        │
-│     SheetMind 用流式处理，内存占用 <50MB                     │
-│                                                             │
-│  🔍 模糊匹配                                               │
-│     客户表"张三" 匹配 交易表"张山"                         │
-│     Levenshtein距离算法，智能纠错                           │
-│                                                             │
-│  📊 透视分析                                               │
-│     一键生成多维分析报告                                     │
-│     类似Excel数据透视表，但更智能                            │
-│                                                             │
-│  🔐 企业级安全                                             │
-│     路径白名单 + JEXL沙箱 + 操作审计                         │
-│     放心让AI处理敏感数据                                     │
-│                                                             │
-│  ⚡ 虚拟线程                                                │
-│     Java 21 虚拟线程，百万级并发                            │
-│     IO密集型任务性能提升10倍+                                │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│  🚀 别人做不到的，我们做到了                                      │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  💾 内存安全                                                    │
+│     100万行 Excel 文件，传统方案直接崩溃                         │
+│     SheetMind 用流式处理，内存占用永远 <50MB                     │
+│                                                                  │
+│  🔍 模糊匹配                                                    │
+│     客户表"张三" 匹配 交易表"张山"                              │
+│     Levenshtein 距离算法，智能纠错                              │
+│                                                                  │
+│  ⚡ 虚拟线程                                                    │
+│     Java 21 虚拟线程，百万级并发                                │
+│     IO 密集型任务性能提升 10 倍+                                 │
+│                                                                  │
+│  📊 透视分析                                                    │
+│     一键生成多维分析报告                                         │
+│     类似 Excel 数据透视表，但更智能                               │
+│                                                                  │
+│  🔐 企业级安全                                                  │
+│     路径白名单 + JEXL 沙箱 + 操作审计                            │
+│     放心让 AI 处理敏感数据                                       │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ### 真实场景对比
 
-| 场景 | 其他MCP | SheetMind |
+| 场景 | 其他 MCP | SheetMind |
 |------|---------|-----------|
-| 处理100万行数据 | ❌ OOM崩溃 | ✅ 流式处理 |
+| 处理 100 万行数据 | ❌ OOM 崩溃 | ✅ 流式处理 |
 | 查找"张三"但表里是"张山" | ❌ 查不到 | ✅ 模糊匹配 |
-| 按城市+产品统计销售额 | ❌ 写代码 | ✅ pivot_table |
-| 执行=SUM(A1:A1000) | ❌ 不支持 | ✅ evaluate_formula |
-| 100个Excel查某人打卡记录 | ❌ 串行慢 | ✅ federated_query并行 |
-
-### 选 SheetMind 的理由
-
-> **"不是所有Excel MCP都敢处理100万行，但SheetMind敢。"**
-
-- ✅ **最懂大文件** - 专为百万行级别设计
-- ✅ **最智能** - 模糊匹配、类型推断、透视分析
-- ✅ **最安全** - 企业级沙箱保护
-- ✅ **最高效** - Java 21 虚拟线程
-- ✅ **最全面** - 16个工具，覆盖全部工作流
+| 按城市+产品统计销售额 | ❌ 写代码 | ✅ `pivot_table` |
+| 执行 `=SUM(A1:A1000)` | ❌ 不支持 | ✅ `evaluate_formula` |
+| 100 个 Excel 查某人打卡记录 | ❌ 串行慢 | ✅ `federated_query` 并行 |
 
 ---
 
-## 🛠️ 核心功能 / Core Features
+## 性能指标
 
-SheetMind 提供 **16个** MCP 工具，支持完整的 Excel 数据处理工作流：
-
-### 工具清单 / Tools Summary
-
-| 工具 / Tool | 功能 / Function | 类别 / Category |
-|------------|----------------|----------------|
-| `scan_directory` | 扫描目录下所有Excel文件 | 文件 |
-| `list_sheets` | 列出所有Sheet名称 | 文件 |
-| `inspect_spreadsheet` | 获取表结构和预览 | 读取 |
-| `smart_search_rows` | JEXL流式检索 | 读取 |
-| `federated_query` | 跨目录多文件联邦查询 | 读取 |
-| `infer_types` | 自动推断列数据类型 | 读取 |
-| `evaluate_formula` | 执行Excel原生公式 | 读取 |
-| `summarize_column` | 数值列统计 | 分析 |
-| `aggregate_table` | 分组聚合 | 分析 |
-| `pivot_table` | 数据透视转换 | 分析 |
-| `join_tables` | 多表联查 | 分析 |
-| `fuzzy_match` | 模糊匹配 | 分析 |
-| `update_cell` | 精准更新单元格 | 写入 |
-| `clean_data` | 数据清洗 | 写入 |
-| `sort_data` | 数据排序 | 写入 |
-| `export_data` | 导出为新Excel | 写入 |
+| 指标 | 数值 | 说明 |
+|------|------|------|
+| **文件大小支持** | ≤150MB（实测） | 100万行销售数据 |
+| **内存占用** | <50MB（常量） | O(1) 内存复杂度 |
+| **处理速度** | ~10,000 行/秒 | 现代硬件配置 |
+| **表达式性能** | ~1,000 行/秒 | 包含 JEXL 表达式过滤 |
 
 ---
 
-### 1. 📋 工作表检查 / `inspect_spreadsheet`
-获取工作表元数据和预览数据，帮助AI理解数据结构。
+## 16 个 MCP 工具
 
-**输入 / Input:**
-```json
-{
-  "filePath": "/path/to/data.xlsx"
-}
+| 工具 | 功能 |
+|------|------|
+| `scan_directory` | 扫描目录下所有 Excel 文件 |
+| `list_sheets` | 列出所有 Sheet 名称 |
+| `inspect_spreadsheet` | 获取表结构和预览 |
+| `smart_search_rows` | JEXL 流式检索 |
+| `federated_query` | 跨目录多文件联邦查询 |
+| `infer_types` | 自动推断列数据类型 |
+| `evaluate_formula` | 执行 Excel 原生公式 |
+| `summarize_column` | 数值列统计 |
+| `aggregate_table` | 分组聚合 |
+| `pivot_table` | 数据透视转换 |
+| `join_tables` | 多表联查 |
+| `fuzzy_match` | 模糊匹配 |
+| `compare_schemas` | 跨文件 Schema 对比 |
+| `update_cell` | 精准更新单元格 |
+| `clean_data` | 数据清洗 |
+| `sort_data` | 数据排序 |
+| `export_data` | 导出为新 Excel |
+
+---
+
+## 快速开始
+
+### 一键安装（推荐）
+
+```bash
+npx sheetmind-mcp
 ```
 
-**输出 / Output:**
+自动完成：
+- 下载对应平台的可执行文件
+- 配置所有 AI 客户端（Claude Desktop、Cursor、Claude Code、OpenCode、Codex）
+
+### 手动安装
+
+#### 下载 Release
+
+前往 [GitHub Releases](https://github.com/Raclez/sheetmind/releases) 下载：
+
+| 平台 | 文件 |
+|------|------|
+| Linux | `sheetmind` |
+| macOS | `sheetmind-macos` |
+| Windows | `sheetmind.exe` |
+| 全部 | `sheetmind-mcp-*.jar` (需 JDK 21) |
+
+#### 手动配置
+
+编辑配置文件：
+- **Claude Desktop (macOS)**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Claude Desktop (Windows)**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Cursor (macOS)**: `~/Library/Application Support/Cursor/cursor_app.json`
+- **Cursor (Windows)**: `%APPDATA%\Cursor\cursor_app.json`
+
 ```json
 {
-  "success": true,
-  "data": {
-    "fileName": "data.xlsx",
-    "sheetName": "SalesData",
-    "previewRowCount": 5,
-    "columnCount": 9,
-    "headers": ["ID", "Product", "Category", "Region", "Price", "Quantity", "Total", "Status", "Date"],
-    "preview": [...],
-    "note": "Row count is based on preview only; streaming reader cannot determine total rows without full scan"
-  }
-}
-```
-
-### 2. 🔍 智能搜索 / `smart_search_rows`
-流式搜索 + JEXL 表达式过滤，支持分页。
-
-**输入 / Input:**
-```json
-{
-  "filePath": "/path/to/data.xlsx",
-  "query": "Price > 1000 && Status == 'Done' && Region in ['North', 'South']",
-  "pagination": {
-    "limit": 20,
-    "offset": 0
-  }
-}
-```
-
-**输出 / Output:**
-```json
-{
-  "success": true,
-  "data": {
-    "rowsProcessed": 150,
-    "rowsFiltered": 23,
-    "returnedCount": 20,
-    "results": [...],
-    "pagination": {
-      "limit": 20,
-      "offset": 0,
-      "hasMore": true
+  "mcpServers": {
+    "sheetmind": {
+      "command": "/path/to/sheetmind-macos"
     }
   }
 }
 ```
 
-### 3. ✏️ 单元格更新 / `update_cell`
-原子单元格更新，自动备份保障数据安全。
+### 本地构建
 
-**输入 / Input:**
-```json
-{
-  "filePath": "/path/to/data.xlsx",
-  "row": 5,
-  "col": 2,
-  "value": "Updated Value"
-}
-```
-
-**安全机制 / Safety Features:**
-- 自动创建 `.bak` 备份文件
-- 文件大小限制：≤50MB（可配置）
-- 临时文件写入 + 原子替换
-- 失败时自动恢复备份
-
-### 4. 📊 列统计 / `summarize_column`
-数值列统计分析，支持去重计数（10k上限）。
-
-**输入 / Input:**
-```json
-{
-  "filePath": "/path/to/data.xlsx",
-  "column": "E"  // 或 "4"（列索引）/ or "4" (column index)
-}
-```
-
-**输出 / Output:**
-```json
-{
-  "success": true,
-  "data": {
-    "columnName": "Price",
-    "columnIndex": 4,
-    "totalRows": 1000,
-    "sum": 1250000.50,
-    "average": 1250.50,
-    "min": 50.00,
-    "max": 2000.00,
-    "uniqueCount": 850,
-    "uniqueCountNote": "Unique count capped at 10000; actual unique values may be higher"
-  }
-}
-```
-
----
-
-## 🚀 快速开始 / Quick Start
-
-### 系统要求 / Prerequisites
-- **Java**: 21 或更高版本 / 21 or higher（需要虚拟线程支持）
-- **Maven**: 3.6+（构建工具）/ 3.6+ (build tool)
-
-### 构建项目 / Build the Project
 ```bash
-# 克隆仓库 / Clone repository
 git clone https://github.com/Raclez/sheetmind.git
-cd sheetmind
-
-# 构建项目 / Build project
-cd sheetmind-mcp
+cd sheetmind/sheetmind-mcp
 mvn clean package
-
-# 生成可执行 JAR
-# Build produces: target/sheetmind-mcp-1.0-SNAPSHOT-jar-with-dependencies.jar
-```
-
-### 集成到 AI 客户端 / Integration with AI Clients
-
-#### **OpenClaw 配置 / OpenClaw Configuration**
-```json
-{
-  "mcpServers": {
-    "sheetmind": {
-      "command": "java",
-      "args": [
-        "-jar",
-        "/absolute/path/to/sheetmind-mcp/target/sheetmind-mcp-1.0-SNAPSHOT-jar-with-dependencies.jar"
-      ],
-      "env": {}
-    }
-  }
-}
-```
-
-#### **Claude Desktop 配置 / Claude Desktop Configuration**
-```json
-{
-  "mcpServers": {
-    "sheetmind": {
-      "command": "java",
-      "args": [
-        "-jar",
-        "/path/to/sheetmind-mcp-1.0-SNAPSHOT-jar-with-dependencies.jar"
-      ]
-    }
-  }
-}
 ```
 
 ---
 
-## 📈 性能指标 / Performance Metrics
+## 架构设计
 
-| 指标 / Metric | 数值 / Value | 说明 / Description |
-|--------------|-------------|-------------------|
-| **文件大小支持**<br>**File Size Support** | ≤150MB（实测）<br>≤150MB (tested) | 1百万行销售数据 |
-| **内存占用**<br>**Memory Usage** | <50MB（常量）<br><50MB (constant) | O(1) 内存复杂度 |
-| **处理速度**<br>**Processing Speed** | ~10,000 行/秒<br>~10,000 rows/sec | 现代硬件配置 |
-| **表达式性能**<br>**Expression Performance** | ~1,000 行/秒<br>~1,000 rows/sec | 包含JEXL表达式过滤 |
-| **并发支持**<br>**Concurrency Support** | 多实例部署<br>Multi-instance deployment | 无状态设计 |
-
-### 🧠 内存管理最佳实践 / Memory Management Best Practices
-
-```java
-// ✅ 正确做法 - 流式处理 / CORRECT - Streaming
-try (Workbook workbook = StreamingReader.builder()
-        .rowCacheSize(100)
-        .bufferSize(4096)
-        .open(file)) {
-    // 逐行处理 / Process row by row
-}
-
-// ❌ 错误做法 - 全量加载 / WRONG - Full load
-Workbook workbook = WorkbookFactory.create(file); // OOM风险 / OOM risk
 ```
+AI Client (Cursor/Claude) → MCP Stdio → SheetMind → Streaming Excel (POI)
+                                              ↓
+                              JEXL Expression Engine
+                                              ↓
+                              Java 21 Virtual Threads
+```
+
+### 技术栈
+
+| 组件 | 技术 | 版本 |
+|------|------|------|
+| 核心引擎 | Apache POI Streaming Reader | 5.2.5 |
+| 协议层 | mcp-annotated-java-sdk | 0.13.0 |
+| 表达式引擎 | Apache JEXL 3 | 3.3 |
+| 并行处理 | Java 21 Virtual Threads | 21 |
+| 序列化 | Jackson Databind | 2.17.1 |
 
 ---
 
-## 🔧 高级配置 / Advanced Configuration
+## 使用示例
 
-### 环境变量 / Environment Variables
-```bash
-# 内存限制 / Memory limits
-export SHEETMIND_JAVA_OPTS="-Xmx512m -Xms128m"
-
-# 日志级别 / Log level
-export SHEETMIND_LOG_LEVEL="INFO"
-```
-
-### 配置文件 / Configuration File (planned)
-```yaml
-sheetmind:
-  limits:
-    updateFileSize: 52428800  # 50MB
-    uniqueValues: 10000
-    previewRows: 5
-    defaultSearchLimit: 20
-  
-  streaming:
-    rowCacheSize: 100
-    bufferSize: 4096
-  
-  security:
-    allowedPaths: ["/data/excel", "/tmp"]
-    maxConcurrent: 10
-```
-
----
-
-## 🧪 测试与示例 / Testing & Examples
-
-### 生成示例数据 / Generate Sample Data
-```bash
-cd sheetmind-mcp
-mvn compile
-mvn exec:java -Dexec.mainClass="com.openclaw.sheetmind.ExampleDataGenerator"
-# 生成: examples/sample_data.xlsx (1000行销售数据)
-```
-## 🔌 接入与使用 / Integration & Usage
-
-> **⚠️ 重要提示 / Important Note:** > SheetMind 是基于 **Stdio (标准输入输出)** 协议的 MCP 服务器，**不提供 HTTP/REST API**。请勿使用 `curl` 或 Postman 进行测试。它必须作为子进程被 AI 客户端唤醒。
-> SheetMind operates over the **Stdio** protocol. It does **NOT** expose HTTP endpoints. Do not use `curl` to test it.
-
-确保您已经通过 `mvn clean package` 生成了 Fat JAR：
-Ensure you have built the Fat JAR using Maven:
-`target/sheetmind-mcp-1.0-SNAPSHOT-jar-with-dependencies.jar`
-
-### 场景一：接入 Claude Desktop / Use with Claude Desktop
-修改 Claude Desktop 的配置文件：
-Edit your Claude Desktop configuration file:
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-
-添加以下配置（注意替换为您本机的绝对路径）：
-Add the following configuration (replace with your absolute path):
+### 智能搜索
 
 ```json
 {
-  "mcpServers": {
-    "sheetmind": {
-      "command": "java",
-      "args": [
-        "-jar",
-        "/绝对路径/到/你的/sheetmind-mcp/target/sheetmind-mcp-1.0-SNAPSHOT-jar-with-dependencies.jar"
-      ]
-    }
-  }
+  "filePath": "/path/to/data.xlsx",
+  "query": "Price > 1000 && Status == 'Done'",
+  "pagination": { "limit": 20, "offset": 0 }
 }
 ```
-*保存后，彻底重启 Claude Desktop 即可。您可以直接对 Claude 说：“帮我用 sheetmind 查一下工作区里的 test.xlsx”。*
 
-### 场景二：接入 Cursor IDE / Use with Cursor IDE
-1. 打开 Cursor 设置 / Open Cursor Settings -> **Features** -> **MCP**
-2. 点击 **+ Add New MCP Server**
-3. 填写以下信息 / Fill in the details:
-    - **Name**: `sheetmind`
-    - **Type**: `command`
-    - **Command**: `java -jar /绝对路径/到/你的/sheetmind-mcp/target/sheetmind-mcp-1.0-SNAPSHOT-jar-with-dependencies.jar`
-4. 点击 Save。确认绿灯亮起后，即可在 Cursor Composer 中无缝调用。
+### 模糊匹配
 
----
-
-## 🧪 开发者调试 / Developer Debugging
-
-如果您只想在本地测试各个工具的输入输出（不依赖 Claude/Cursor），可以使用官方的 **MCP Inspector** 调试面板（需预装 Node.js）：
-If you want to test the tools with a GUI before integrating, use the official MCP Inspector:
-
-```bash
-# 在项目根目录下执行 / Run in the project root directory
-npx @modelcontextprotocol/inspector java -jar target/sheetmind-mcp-1.0-SNAPSHOT-jar-with-dependencies.jar
+```json
+{
+  "sourceFile": "/path/to/customers.xlsx",
+  "sourceColumn": "姓名",
+  "targetFile": "/path/to/orders.xlsx",
+  "targetColumn": "客户姓名",
+  "threshold": 0.8
+}
 ```
-这会在您的浏览器中自动打开一个调试页面，您可以像使用 Postman 一样直观地测试 `inspect_spreadsheet` 和 `smart_search_rows` 等所有工具。
+
+### 数据透视
+
+```json
+{
+  "filePath": "/path/to/sales.xlsx",
+  "rows": ["城市"],
+  "columns": ["产品"],
+  "values": ["销售额"],
+  "aggregations": ["sum"]
+}
+```
 
 ---
 
-## 🏭 生产部署 / Production Deployment
+## 生产部署
 
-### Docker 部署 / Docker Deployment
+### Docker
+
 ```dockerfile
 FROM openjdk:21-jdk-slim
 WORKDIR /app
 COPY sheetmind-mcp/target/sheetmind-mcp-*.jar app.jar
-EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]
 ```
 
-### Kubernetes 配置 / Kubernetes Configuration
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: sheetmind-mcp
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: sheetmind
-  template:
-    metadata:
-      labels:
-        app: sheetmind
-    spec:
-      containers:
-      - name: sheetmind
-        image: yourregistry/sheetmind:latest
-        ports:
-        - containerPort: 8080
-        resources:
-          limits:
-            memory: "512Mi"
-            cpu: "500m"
-```
-
-### 监控指标 / Monitoring Metrics (planned)
-- 文件处理统计
-- 内存使用情况
-- 请求响应时间
-- 错误率统计
-
 ---
 
-## 📚 API 文档 / API Documentation
+## 许可证
 
-### 通用响应格式 / Common Response Format
-```json
-{
-  "success": true|false,
-  "data": {...},        // 成功时返回数据
-  "error": "message"    // 失败时错误信息
-}
-```
-
-### 错误码 / Error Codes
-| 错误码 / Code | 描述 / Description | 解决方案 / Solution |
-|--------------|-------------------|-------------------|
-| `FILE_NOT_FOUND` | 文件不存在 | 检查文件路径 |
-| `INVALID_EXPRESSION` | JEXL表达式错误 | 验证表达式语法 |
-| `FILE_SIZE_EXCEEDED` | 文件超过50MB限制 | 使用其他工具或分割文件 |
-| `COLUMN_OUT_OF_RANGE` | 列索引超出范围 | 检查列标识符 |
-| `UPDATE_FAILED` | 单元格更新失败 | 检查文件权限和格式 |
-
----
-
-## 🔄 开发指南 / Development Guide
-
-### 项目结构 / Project Structure
-```
-sheetmind/
-├── sheetmind-mcp/                 # 主模块 / Main module
-│   ├── src/main/java/com/openclaw/sheetmind/
-│   │   └── SheetMindServer.java   # 主服务器类
-│   ├── src/test/java/com/openclaw/sheetmind/
-│   │   └── ExampleDataGenerator.java  # 测试数据生成器
-│   ├── examples/                  # 示例文件
-│   ├── pom.xml                    # Maven配置
-│   └── README.md                  # 模块文档（保留）
-├── .gitignore
-├── LICENSE
-└── README.md                      # 项目主文档（本文件）
-```
-
-### 添加新工具 / Adding New Tools
-1. 在 `SheetMindServer` 类中添加 `@McpTool` 注解的方法
-2. 实现流式I/O处理逻辑
-3. 返回JSON格式响应
-4. 添加单元测试
-5. 更新文档
-
-### 构建与测试 / Build & Test
-```bash
-# 完整构建 / Full build
-mvn clean package
-
-# 运行测试 / Run tests
-mvn test
-
-# 代码质量检查 / Code quality check
-mvn checkstyle:check
-mvn pmd:check
-```
-
----
-
-## 🤝 贡献指南 / Contributing
-
-我们欢迎各种形式的贡献！/ We welcome contributions of all kinds!
-
-### 贡献流程 / Contribution Process
-1. **Fork 仓库** / Fork the repository
-2. **创建特性分支** / Create feature branch: `git checkout -b feature/your-feature`
-3. **提交更改** / Commit changes: `git commit -m 'Add some feature'`
-4. **推送到分支** / Push to branch: `git push origin feature/your-feature`
-5. **创建 Pull Request** / Create Pull Request
-
-### 开发规范 / Development Standards
-- 遵循 Java 编码规范 / Follow Java coding conventions
-- 添加单元测试 / Add unit tests
-- 更新相关文档 / Update relevant documentation
-- 保持向后兼容性 / Maintain backward compatibility
-
----
-
-## 📄 许可证 / License
-
-本项目基于 **Apache License 2.0** 许可证开源。/ This project is open source under the **Apache License 2.0**.
-
-```
-Copyright 2026 Raclez
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-```
-
----
-
-## 📞 支持与联系 / Support & Contact
-
-### 问题反馈 / Issue Reporting
-- **GitHub Issues**: [https://github.com/Raclez/sheetmind/issues](https://github.com/Raclez/sheetmind/issues)
-- **优先处理** / Priority handling: 安全漏洞、数据丢失、崩溃问题
-
-### 社区 / Community
-- **Discord**: [加入讨论](https://discord.gg/clawd)
-- **Email**: [ryuzzzz0013@gmail.com]
-
-### 商业支持 / Commercial Support
-如需企业级支持、定制开发或咨询，请联系项目维护者。
-
----
-
-## 🌟 致谢 / Acknowledgments
-
-- **Apache POI** 团队提供优秀的 Excel 处理库
-- **MCP** 社区推动 AI 工具互操作标准
-- **所有贡献者** 的代码和反馈
+Apache License 2.0
 
 ---
 
 <p align="center">
-  <strong>SheetMind</strong> - 让AI更智能地处理Excel，一行流式处理，无限可能。<br/>
-  <strong>SheetMind</strong> - Making AI smarter with Excel, one streaming row at a time.
+  <strong>SheetMind</strong> - 让 AI 更智能地处理 Excel
 </p>
 
 <p align="center">
-  <sub>Built with ❤️ by Raclez • 基于 Java 21 • Apache 2.0 Licensed</sub>
+  <sub>Built with ❤️ by Raclez • Java 21 • Apache 2.0</sub>
 </p>

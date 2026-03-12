@@ -308,6 +308,8 @@ public class SheetMindServer {
     // ========== 工具 3: 原子无内存泄漏修改 (Stream-Copy-Append) ==========
     // 定义大文件阈值：30MB (约等于四五十万行，再大极易 OOM)
     private static final long LARGE_FILE_THRESHOLD = 30 * 1024 * 1024L;
+    private static final int FORMULA_MAX_ROWS = 10000;
+    private static final int FORMULA_ROW_ESTIMATE_SAMPLE = 100;
 
     @McpTool(name = "update_cell", description = "精准更新特定单元格。注意：为保护系统内存，不支持修改大于 30MB 的文件。\n" +
             "【⚠️ 致命警告：索引机制】\n" +
@@ -2005,13 +2007,7 @@ public class SheetMindServer {
 
                 Map<String, Object> results = new LinkedHashMap<>();
                 for (Map.Entry<String, TypeInfo> entry : typeMap.entrySet()) {
-                    Map<String, Object> colResult = new LinkedHashMap<>();
-                    colResult.put("inferredType", entry.getValue().inferType());
-                    colResult.put("confidence", entry.getValue().getConfidence());
-                    colResult.put("sampleValue", entry.getValue().sampleValue);
-                    colResult.put("nullCount", entry.getValue().nullCount);
-                    colResult.put("totalCount", rowCount);
-                    results.put(entry.getKey(), colResult);
+                    results.put(entry.getKey(), entry.getValue().getExtendedInfo(rowCount));
                 }
 
                 return successResponse(Map.of(
@@ -2020,7 +2016,7 @@ public class SheetMindServer {
                         "columns", headers.size(),
                         "sampledRows", rowCount,
                         "columnTypes", results,
-                        "note", "支持的类型: DATE, DECIMAL, INTEGER, BOOLEAN, STRING"
+                        "note", "增强版：新增数值范围(min/max)、字符串长度、唯一值、日期格式等元信息"
                 ));
             }
         } catch (Exception e) {
@@ -2037,6 +2033,14 @@ public class SheetMindServer {
         int stringCount = 0;
         Object sampleValue = null;
 
+        double minValue = Double.MAX_VALUE;
+        double maxValue = -Double.MAX_VALUE;
+        int minStrLen = Integer.MAX_VALUE;
+        int maxStrLen = 0;
+        Set<String> uniqueValues = new LinkedHashSet<>();
+        String detectedDateFormat = null;
+        private static final int MAX_UNIQUE_VALUES = 20;
+
         void analyze(Object value) {
             if (value == null || value.toString().isBlank()) {
                 nullCount++;
@@ -2046,20 +2050,54 @@ public class SheetMindServer {
             if (sampleValue == null) sampleValue = value;
 
             String str = value.toString();
+            int strLen = str.length();
+            if (strLen < minStrLen) minStrLen = strLen;
+            if (strLen > maxStrLen) maxStrLen = strLen;
+
+            if (uniqueValues.size() < MAX_UNIQUE_VALUES && !uniqueValues.contains(str)) {
+                uniqueValues.add(str);
+            }
 
             if (value instanceof Number) {
-                if (((Number) value).doubleValue() % 1 == 0) {
+                double numVal = ((Number) value).doubleValue();
+                if (numVal < minValue) minValue = numVal;
+                if (numVal > maxValue) maxValue = numVal;
+
+                if (numVal % 1 == 0) {
                     integerCount++;
                 } else {
                     decimalCount++;
                 }
             } else if ("true".equalsIgnoreCase(str) || "false".equalsIgnoreCase(str)) {
                 booleanCount++;
-            } else if (str.matches("\\d{4}-\\d{2}-\\d{2}.*") || str.matches("\\d{4}/\\d{2}/\\d{2}.*")) {
+            } else if (detectDateFormat(str)) {
                 dateCount++;
             } else {
                 stringCount++;
             }
+        }
+
+        private boolean detectDateFormat(String str) {
+            if (str.matches("\\d{4}-\\d{2}-\\d{2}")) {
+                detectedDateFormat = "yyyy-MM-dd";
+                return true;
+            } else if (str.matches("\\d{4}/\\d{2}/\\d{2}")) {
+                detectedDateFormat = "yyyy/MM/dd";
+                return true;
+            } else if (str.matches("\\d{2}-\\d{2}-\\d{4}")) {
+                detectedDateFormat = "dd-MM-yyyy";
+                return true;
+            } else if (str.matches("\\d{2}/\\d{2}/\\d{4}")) {
+                detectedDateFormat = "dd/MM/yyyy";
+                return true;
+            } else if (str.matches("\\d{4}-\\d{2}-\\d{2}\\s+\\d{2}:\\d{2}")) {
+                detectedDateFormat = "yyyy-MM-dd HH:mm";
+                return true;
+            } else if (str.matches("\\d{4}\\年\\d{1,2}\\月\\d{1,2}\\日")) {
+                detectedDateFormat = "yyyy年M月d日";
+                return true;
+            }
+            return false;
         }
 
         String inferType() {
@@ -2076,6 +2114,42 @@ public class SheetMindServer {
             if (total == 0) return 0;
             int max = Math.max(dateCount, Math.max(decimalCount, Math.max(integerCount, Math.max(booleanCount, stringCount))));
             return (double) max / total;
+        }
+
+        Map<String, Object> getExtendedInfo(int totalCount) {
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("inferredType", inferType());
+            info.put("confidence", getConfidence());
+            info.put("sampleValue", sampleValue);
+            info.put("nullCount", nullCount);
+            info.put("totalCount", totalCount);
+            info.put("nullRatio", totalCount > 0 ? (double) nullCount / totalCount : 0);
+
+            String type = inferType();
+            if ("INTEGER".equals(type) || "DECIMAL".equals(type)) {
+                if (minValue != Double.MAX_VALUE) {
+                    info.put("min", minValue);
+                    info.put("max", maxValue);
+                    info.put("range", maxValue - minValue);
+                }
+            } else if ("STRING".equals(type)) {
+                if (minStrLen != Integer.MAX_VALUE) {
+                    info.put("minLength", minStrLen);
+                    info.put("maxLength", maxStrLen);
+                }
+                info.put("uniqueCount", uniqueValues.size());
+                if (uniqueValues.size() <= MAX_UNIQUE_VALUES) {
+                    info.put("uniqueValues", new ArrayList<>(uniqueValues));
+                } else {
+                    List<String> topValues = new ArrayList<>(uniqueValues);
+                    info.put("uniqueValues", topValues.subList(0, MAX_UNIQUE_VALUES));
+                    info.put("note", "显示前 " + MAX_UNIQUE_VALUES + " 个唯一值");
+                }
+            } else if ("DATE".equals(type) && detectedDateFormat != null) {
+                info.put("dateFormat", detectedDateFormat);
+            }
+
+            return info;
         }
     }
 
@@ -2096,8 +2170,10 @@ public class SheetMindServer {
         try {
             File safeFile = getSafeFile(filePath);
 
-            if (safeFile.length() > LARGE_FILE_THRESHOLD) {
-                return Map.of("success", false, "error", "文件过大，无法加载公式计算器");
+            int estimatedRows = estimateRowCount(safeFile, sheetName);
+            if (estimatedRows > FORMULA_MAX_ROWS) {
+                return Map.of("success", false, "error",
+                        "文件行数(" + estimatedRows + ")超过公式计算限制(" + FORMULA_MAX_ROWS + ")，请使用 streaming reader 进行大数据处理");
             }
 
             try (FileInputStream fis = new FileInputStream(safeFile);
@@ -2143,6 +2219,172 @@ public class SheetMindServer {
         }
     }
 
+    // ========== 工具 16: 跨文件 Schema 对比 ==========
+    @McpTool(name = "compare_schemas", description = "跨文件 Schema 对比工具，对比多个Excel文件的列结构。\n" +
+            "【功能】：\n" +
+            "  1. 提取每个文件的列信息（列名、类型、范围等）\n" +
+            "  2. 基于列名相似度匹配，识别相同/相似列\n" +
+            "  3. 提供列映射建议，用于 join_tables 等操作\n" +
+            "【参数】：\n" +
+            "  - sources: 文件列表 [{path, sheetName, alias}, ...]\n" +
+            "  - threshold: 相似度阈值 (0-1)，默认 0.6\n" +
+            "【返回】：每个文件的 schema 摘要 + 列匹配建议")
+    public Map<String, Object> compareSchemas(
+            @McpToolParam(name = "sources", description = "文件列表，每个包含 path, sheetName, alias") List<Map<String, String>> sources,
+            @McpToolParam(name = "threshold", description = "相似度阈值 (0-1)，默认 0.6") Double threshold,
+            @McpToolParam(name = "sampleSize", description = "采样行数，默认100") Integer sampleSize) {
+        try {
+            double simThreshold = threshold != null ? threshold : 0.6;
+            int sample = sampleSize != null ? sampleSize : 100;
+
+            if (sources == null || sources.size() < 2) {
+                return Map.of("success", false, "error", "至少需要提供2个文件进行对比");
+            }
+
+            Map<String, Map<String, Map<String, Object>>> fileSchemas = new LinkedHashMap<>();
+
+            for (Map<String, String> source : sources) {
+                String path = source.get("path");
+                String sheetName = source.get("sheetName");
+                String alias = source.get("alias");
+
+                if (path == null || path.isBlank()) {
+                    return Map.of("success", false, "error", "path 不能为空");
+                }
+
+                if (alias == null || alias.isBlank()) {
+                    alias = "file_" + fileSchemas.size();
+                }
+
+                File safeFile = getSafeFile(path);
+                Map<String, Object> schema = extractSchema(safeFile, sheetName, sample);
+                fileSchemas.put(alias, (Map<String, Map<String, Object>>) schema.get("columns"));
+            }
+
+            List<String> aliases = new ArrayList<>(fileSchemas.keySet());
+            List<Map<String, Object>> matches = findColumnMatches(fileSchemas, aliases, simThreshold);
+
+            return successResponse(Map.of(
+                    "fileCount", sources.size(),
+                    "files", aliases,
+                    "schemas", fileSchemas,
+                    "columnMatches", matches,
+                    "threshold", simThreshold,
+                    "matchCount", matches.size(),
+                    "note", "columnMatches 中的映射建议可用于 join_tables 的 joinOn 配置"
+            ));
+        } catch (Exception e) {
+            return errorResponse(e);
+        }
+    }
+
+    private Map<String, Object> extractSchema(File file, String sheetName, int sampleSize) throws IOException {
+        try (Workbook workbook = StreamingReader.builder().rowCacheSize(STREAMING_ROW_CACHE_SIZE).open(file)) {
+            Sheet sheet = getSheet(workbook, sheetName, null);
+            Iterator<Row> rowIterator = sheet.iterator();
+
+            List<String> headers = new ArrayList<>();
+            if (rowIterator.hasNext()) {
+                for (Cell cell : rowIterator.next()) {
+                    headers.add(getCellValueAsString(cell));
+                }
+            }
+
+            Map<String, TypeInfo> typeMap = new LinkedHashMap<>();
+            for (String header : headers) {
+                typeMap.put(header, new TypeInfo());
+            }
+
+            int rowCount = 0;
+            while (rowIterator.hasNext() && rowCount < sampleSize) {
+                Row row = rowIterator.next();
+                for (int i = 0; i < headers.size(); i++) {
+                    Object value = getCellValue(row.getCell(i, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK));
+                    typeMap.get(headers.get(i)).analyze(value);
+                    rowCount++;
+                }
+            }
+
+            Map<String, Map<String, Object>> result = new LinkedHashMap<>();
+            for (Map.Entry<String, TypeInfo> entry : typeMap.entrySet()) {
+                result.put(entry.getKey(), entry.getValue().getExtendedInfo(rowCount));
+            }
+
+            return Map.of("columns", result, "rowCount", rowCount);
+        }
+    }
+
+    private List<Map<String, Object>> findColumnMatches(Map<String, Map<String, Map<String, Object>>> schemas,
+                                                        List<String> aliases, double threshold) {
+        List<Map<String, Object>> matches = new ArrayList<>();
+
+        if (aliases.size() < 2) return matches;
+
+        Map<String, Map<String, Double>> similarityMatrix = new LinkedHashMap<>();
+
+        for (int i = 0; i < aliases.size(); i++) {
+            for (int j = i + 1; j < aliases.size(); j++) {
+                String alias1 = aliases.get(i);
+                String alias2 = aliases.get(j);
+                Map<String, Map<String, Object>> schema1 = schemas.get(alias1);
+                Map<String, Map<String, Object>> schema2 = schemas.get(alias2);
+
+                for (String col1 : schema1.keySet()) {
+                    for (String col2 : schema2.keySet()) {
+                        double sim = compareColumnSimilarity(col1, col2);
+                        if (sim >= threshold) {
+                            Map<String, Object> match = new LinkedHashMap<>();
+                            match.put("column1", alias1 + "." + col1);
+                            match.put("column2", alias2 + "." + col2);
+                            match.put("similarity", sim);
+                            match.put("type1", schema1.get(col1).get("inferredType"));
+                            match.put("type2", schema2.get(col2).get("inferredType"));
+                            matches.add(match);
+                        }
+                    }
+                }
+            }
+        }
+
+        matches.sort((a, b) -> Double.compare((Double) b.get("similarity"), (Double) a.get("similarity")));
+        return matches;
+    }
+
+    private double compareColumnSimilarity(String s1, String s2) {
+        if (s1 == null || s2 == null) return 0;
+        if (s1.equals(s2)) return 1.0;
+
+        s1 = s1.toLowerCase().replaceAll("[\\s_]", "");
+        s2 = s2.toLowerCase().replaceAll("[\\s_]", "");
+
+        if (s1.equals(s2)) return 1.0;
+        if (s1.contains(s2) || s2.contains(s1)) return 0.8;
+
+        int len1 = s1.length();
+        int len2 = s2.length();
+        int[][] dp = new int[len1 + 1][len2 + 1];
+
+        for (int i = 1; i <= len1; i++) {
+            dp[i][0] = i;
+        }
+        for (int j = 1; j <= len2; j++) {
+            dp[0][j] = j;
+        }
+
+        for (int i = 1; i <= len1; i++) {
+            for (int j = 1; j <= len2; j++) {
+                if (s1.charAt(i - 1) == s2.charAt(j - 1)) {
+                    dp[i][j] = dp[i - 1][j - 1];
+                } else {
+                    dp[i][j] = 1 + Math.min(dp[i - 1][j], Math.min(dp[i][j - 1], dp[i - 1][j - 1]));
+                }
+            }
+        }
+
+        int maxLen = Math.max(len1, len2);
+        return maxLen > 0 ? 1.0 - (double) dp[len1][len2] / maxLen : 0;
+    }
+
     private Object getCellValueFromCellValue(CellValue cellValue, Cell cell) {
         return switch (cellValue.getCellType()) {
             case NUMERIC -> cellValue.getNumberValue();
@@ -2161,6 +2403,29 @@ public class SheetMindServer {
             c = c / 26 - 1;
         }
         return sb.toString() + (row + 1);
+    }
+
+    private int estimateRowCount(File file, String sheetName) {
+        try (Workbook wb = StreamingReader.builder()
+                .rowCacheSize(FORMULA_ROW_ESTIMATE_SAMPLE)
+                .bufferSize(STREAMING_BUFFER_SIZE)
+                .open(file)) {
+            Sheet sheet = getSheet(wb, sheetName, null);
+            int rowCount = 0;
+            Iterator<Row> iterator = sheet.iterator();
+
+            while (iterator.hasNext()) {
+                iterator.next();
+                rowCount++;
+                if (rowCount >= FORMULA_ROW_ESTIMATE_SAMPLE * 10) {
+                    return FORMULA_MAX_ROWS + 1;
+                }
+            }
+
+            return rowCount;
+        } catch (Exception e) {
+            return FORMULA_MAX_ROWS + 1;
+        }
     }
 
     // ========== 安全防御核心逻辑 (升级版：多目录匹配) ==========
@@ -2194,8 +2459,11 @@ public class SheetMindServer {
         return context;
     }
 
+    private static final ExecutorService JEXL_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
+    private static final long JEXL_TIMEOUT_MS = 5000;
+
     private static boolean evaluateExpression(JexlExpression expression, MapContext context) {
-        try {
+        FutureTask<Boolean> task = new FutureTask<>(() -> {
             Object result = expression.evaluate(context);
             if (result instanceof Boolean) {
                 return (Boolean) result;
@@ -2207,8 +2475,18 @@ public class SheetMindServer {
                 return !((String) result).isEmpty();
             }
             return false;
+        });
+
+        try {
+            JEXL_EXECUTOR.submit(task);
+            return task.get(JEXL_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            task.cancel(true);
+            throw new RuntimeException("表达式执行超时(" + JEXL_TIMEOUT_MS + "ms)，请优化查询条件");
         } catch (JexlException e) {
-            return false; // 静默处理单行脏数据导致的计算失败
+            return false;
+        } catch (Exception e) {
+            return false;
         }
     }
 

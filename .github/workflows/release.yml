@@ -12,7 +12,6 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
-    # 输出 release_created 状态，供下面的任务使用
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
@@ -24,26 +23,139 @@ jobs:
           release-type: maven
           package-name: sheetmind-mcp
 
-  # 只有在正式发布（Release PR 被合并）后，才执行编译并上传 JAR
-  upload-assets:
+  build-jar:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
           cache: 'maven'
 
       - name: Build JAR
         run: mvn -f sheetmind-mcp/pom.xml clean package -DskipTests
 
-      - name: Upload Release Asset
+      - name: Upload JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: sheetmind-jar
+          path: sheetmind-mcp/target/*.jar
+
+  build-native-linux:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up GraalVM
+        uses: graalvm/setup-graalvm@v1
+        with:
+          version: '21'
+          java-version: '21'
+          components: 'native-image'
+
+      - name: Build Native Image
+        run: |
+          export GRAALVM_HOME=$JAVA_HOME
+          mvn -f sheetmind-mcp/pom.xml package -Pnative -DskipTests
+
+      - name: Upload Linux Native
+        uses: actions/upload-artifact@v4
+        with:
+          name: sheetmind-linux
+          path: sheetmind-mcp/target/sheetmind
+
+  build-native-macos:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up GraalVM
+        uses: graalvm/setup-graalvm@v1
+        with:
+          version: '21'
+          java-version: '21'
+          components: 'native-image'
+
+      - name: Build Native Image
+        run: |
+          export GRAALVM_HOME=$JAVA_HOME
+          mvn -f sheetmind-mcp/pom.xml package -Pnative -DskipTests
+
+      - name: Upload macOS Native
+        uses: actions/upload-artifact@v4
+        with:
+          name: sheetmind-macos
+          path: sheetmind-mcp/target/sheetmind
+
+  build-native-windows:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up GraalVM
+        uses: graalvm/setup-graalvm@v1
+        with:
+          version: '21'
+          java-version: '21'
+          components: 'native-image'
+
+      - name: Build Native Image
+        run: |
+          $env:GRAALVM_HOME = $env:JAVA_HOME
+          mvn -f sheetmind-mcp/pom.xml package -Pnative -DskipTests
+
+      - name: Upload Windows Native
+        uses: actions/upload-artifact@v4
+        with:
+          name: sheetmind-windows
+          path: sheetmind-mcp/target/sheetmind.exe
+
+  upload-assets:
+    needs: [release-please, build-jar, build-native-linux, build-native-macos, build-native-windows]
+    if: ${{ needs.release-please.outputs.release_created }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download JAR
+        uses: actions/download-artifact@v4
+        with:
+          name: sheetmind-jar
+
+      - name: Download Linux Native
+        uses: actions/download-artifact@v4
+        with:
+          name: sheetmind-linux
+
+      - name: Download macOS Native
+        uses: actions/download-artifact@v4
+        with:
+          name: sheetmind-macos
+
+      - name: Download Windows Native
+        uses: actions/download-artifact@v4
+        with:
+          name: sheetmind-windows
+
+      - name: Upload to Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload ${{ needs.release-please.outputs.tag_name }} \
-          sheetmind-mcp/target/*.jar --clobber
+          sheetmind-mcp-*.jar --clobber
+          
+          chmod +x sheetmind
+          gh release upload ${{ needs.release-please.outputs.tag_name }} \
+          sheetmind --clobber --repo "$GITHUB_REPOSITORY"
+          
+          chmod +x sheetmind
+          gh release upload ${{ needs.release-please.outputs.tag_name }} \
+          sheetmind-macos --clobber --repo "$GITHUB_REPOSITORY"
+          
+          gh release upload ${{ needs.release-please.outputs.tag_name }} \
+          sheetmind.exe --clobber --repo "$GITHUB_REPOSITORY"
