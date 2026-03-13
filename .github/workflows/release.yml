@@ -24,6 +24,9 @@ jobs:
           package-name: sheetmind-mcp
           extra-files: |
             package.json
+      - run: |
+          echo "Debug: release_created=${{ steps.release.outputs.release_created }}"
+          echo "Debug: tag_name=${{ steps.release.outputs.tag_name }}"
 
   build-jar:
     needs: release-please
@@ -126,13 +129,18 @@ jobs:
 
   upload-assets:
     needs: [release-please, build-jar, build-native-linux, build-native-macos, build-native-windows]
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Debug release info
+      - name: Check if release
+        id: check_release
         run: |
           echo "release_created: ${{ needs.release-please.outputs.release_created }}"
           echo "tag_name: ${{ needs.release-please.outputs.tag_name }}"
+          if [ "${{ needs.release-please.outputs.release_created }}" == "true" ]; then
+            echo "is_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_release=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Download JAR
         uses: actions/download-artifact@v4
@@ -159,6 +167,7 @@ jobs:
           path: windows
 
       - name: Upload to Release
+        if: needs.release-please.outputs.release_created == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
