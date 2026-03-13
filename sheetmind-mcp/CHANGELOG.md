@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/Raclez/sheetmind/compare/v1.5.1...v1.6.0) (2026-03-13)
+
+
+### Features
+
+* add new feature ([650f42d](https://github.com/Raclez/sheetmind/commit/650f42d4f74598db55722421f143c20c0cce7c68))
+
 ## [1.5.1](https://github.com/Raclez/sheetmind/compare/v1.5.0...v1.5.1) (2026-03-13)
 
 
