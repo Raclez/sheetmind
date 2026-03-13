@@ -159,7 +159,7 @@ jobs:
         run: |
           ls -la
           
-          gh release upload "${{ needs.release-please.outputs.tag_name }}" sheetmind-mcp-*.jar --clobber
+          gh release upload "${{ needs.release-please.outputs.tag_name }}" sheetmind-mcp-jar-with-dependencies.jar --clobber
           
           chmod +x linux/sheetmind-linux
           gh release upload "${{ needs.release-please.outputs.tag_name }}" linux/sheetmind-linux --clobber
