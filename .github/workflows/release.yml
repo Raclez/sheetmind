@@ -27,7 +27,6 @@ jobs:
 
   build-jar:
     needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,7 +48,6 @@ jobs:
 
   build-native-linux:
     needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -76,7 +74,6 @@ jobs:
 
   build-native-macos:
     needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -103,7 +100,6 @@ jobs:
 
   build-native-windows:
     needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
