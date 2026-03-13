@@ -134,6 +134,8 @@
                 <buildArg>--initialize-at-build-time=com.openclaw.sheetmind</buildArg>
                 <buildArg>--initialize-at-build-time=org.apache.poi</buildArg>
                 <buildArg>--initialize-at-build-time=org.apache.commons.jexl3</buildArg>
+                <buildArg>--initialize-at-build-time=ch.qos.logback</buildArg>
+                <buildArg>--initialize-at-build-time=org.slf4j</buildArg>
                 <buildArg>--enable-http</buildArg>
                 <buildArg>--enable-https</buildArg>
               </buildArgs>
