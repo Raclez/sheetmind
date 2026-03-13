@@ -5,7 +5,7 @@
 
   <groupId>com.openclaw.sheetmind</groupId>
   <artifactId>sheetmind-mcp</artifactId>
-  <version>1.5.1-SNAPSHOT</version>
+  <version>1.5.1</version>
 
   <name>sheetmind-mcp</name>
   <!-- FIXME change it to the project's website -->

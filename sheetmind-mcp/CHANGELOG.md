@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/Raclez/sheetmind/compare/v1.5.0...v1.5.1) (2026-03-13)
+
+
+### Bug Fixes
+
+* **workflow:** 修复发布工作流中的条件判断逻辑 ([ee23d4c](https://github.com/Raclez/sheetmind/commit/ee23d4c82be96a7872ef3dd0f95c6f89c7935413))
+
 ## [1.5.0](https://github.com/Raclez/sheetmind/compare/v1.4.1...v1.5.0) (2026-03-13)
 
 
