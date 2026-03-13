@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/Raclez/sheetmind/compare/v1.4.1...v1.5.0) (2026-03-13)
+
+
+### Features
+
+* **sheetmind:** 添加列转换工具功能 ([1c11acf](https://github.com/Raclez/sheetmind/commit/1c11acf88899747f708a6fddcb6862040dbe3cf1))
+
 ## [1.4.1](https://github.com/Raclez/sheetmind/compare/v1.4.0...v1.4.1) (2026-03-13)
 
 
