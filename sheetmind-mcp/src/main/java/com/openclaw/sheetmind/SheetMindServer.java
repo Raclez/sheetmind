@@ -2531,6 +2531,11 @@ public class SheetMindServer {
             default -> DATA_FORMATTER.formatCellValue(cell);
         };
     }
+//测试
+@McpTool(name = "cc", title = "列转换", description = "将列字母转换为列索引")
+    public String cc(String letter) {
+        return "";
+    }
 
     private static String getCellValueAsString(Cell cell) {
         Object value = getCellValue(cell);
