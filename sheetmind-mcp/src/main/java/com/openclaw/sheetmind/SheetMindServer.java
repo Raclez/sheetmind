@@ -157,7 +157,8 @@ public class SheetMindServer {
     }
 
     // ========== 工具 0: 列出所有 Sheet ==========
-    @McpTool(name = "list_sheets", description = "列出Excel文件中的所有Sheet名称")
+    @McpTool(name = "list_sheets", description = "列出Excel文件中的所有Sheet名称。\n" +
+            "【用途】：快速了解文件结构，确认目标Sheet名称后再调用 inspect_spreadsheet 查看表结构。")
     public Map<String, Object> listSheets(@McpToolParam(name = "filePath", description = "Excel文件绝对路径") String filePath) {
         try {
             File file = getSafeFile(filePath);
@@ -375,8 +376,8 @@ public class SheetMindServer {
 
     // ========== 工具 4: 数据统计分析 ==========
     @McpTool(name = "summarize_column", description = "计算指定数值列的统计信息（总和、平均值、最大最小值等）。\n" +
-            "【参数建议】：为了最高准确率，column 参数请直接传入你看过的汉字/英文『列名』(例如 '交易金额'、'浮动盈亏')，不要传数字索引。\n" +
-            "【特性】：它会自动跳过该列中的文本或脏数据，只对有效数字进行计算。")
+            "【参数建议】：column 参数直接传入汉字/英文列名（如 '交易金额'、'Amount'），不要传数字索引。\n" +
+            "【特性】：自动跳过文本或脏数据，只对有效数字计算。")
     public Map<String, Object> summarizeColumn(
             @McpToolParam(name = "filePath", description = "Excel文件绝对路径") String filePath,
             @McpToolParam(name = "column", description = "列标识") String column,
@@ -956,16 +957,20 @@ public class SheetMindServer {
     }
 
     // ========== 工具 7: 数据清洗 ==========
-    @McpTool(name = "clean_data", description = "数据清洗工具，支持去重、填充空值、类型转换、值替换等操作。\n" +
+    @McpTool(name = "clean_data", description = "数据清洗工具，支持去重、填充空值、值替换、去除空格等操作。\n" +
             "【操作类型】：\n" +
-            "  1. removeDuplicates: 去重（基于指定列或全部列）\n" +
-            "  2. fillNull: 填充空值（固定值、前值填充、数字0/平均值的）\n" +
-            "  3. replace: 值替换\n" +
-            "  4. trim: 去除首尾空格\n" +
-            "  5. removeRows: 根据条件删除行\n" +
+            "  1. removeDuplicates: 去重（基于指定列或全部列），参数: columns\n" +
+            "  2. fillNull: 填充空值（固定值/前值/0/平均值），参数: column, value, mode(fixed/previous/zero/mean)\n" +
+            "  3. replace: 值替换，参数: column, oldValue, newValue\n" +
+            "  4. trim: 去除首尾空格，参数: column\n" +
+            "  5. removeRows: 按条件删除行，参数: column, condition (JEXL表达式)\n" +
             "【输出】：返回清洗后的数据（不修改原文件）\n" +
-            "【示例】：去除重复行，填充空值为0\n" +
-            "  operations=[{type:\"removeDuplicates\", columns:[\"客户ID\"]}, {type:\"fillNull\", column:\"金额\", value:\"0\"}]")
+            "【完整示例】：去除客户ID重复行，填充金额空值为0，去除姓名空格\n" +
+            "  operations=[\n" +
+            "    {type:\"removeDuplicates\", columns:[\"客户ID\"]},\n" +
+            "    {type:\"fillNull\", column:\"金额\", value:\"0\", mode:\"fixed\"},\n" +
+            "    {type:\"trim\", column:\"姓名\"}\n" +
+            "  ]")
     public Map<String, Object> cleanData(
             @McpToolParam(name = "filePath", description = "Excel文件绝对路径") String filePath,
             @McpToolParam(name = "sheetName", description = "Sheet名称，不指定则默认第一个") String sheetName,
@@ -2228,7 +2233,12 @@ public class SheetMindServer {
             "【参数】：\n" +
             "  - sources: 文件列表 [{path, sheetName, alias}, ...]\n" +
             "  - threshold: 相似度阈值 (0-1)，默认 0.6\n" +
-            "【返回】：每个文件的 schema 摘要 + 列匹配建议")
+            "【返回】：每个文件的 schema 摘要 + 列匹配建议\n" +
+            "【示例】：对比客户表A和客户表B的列结构\n" +
+            "  sources=[\n" +
+            "    {path:\"/data/客户A.xlsx\", sheetName:\"Sheet1\", alias:\"A\"},\n" +
+            "    {path:\"/data/客户B.xlsx\", sheetName:\"客户表\", alias:\"B\"}\n" +
+            "  ], threshold=0.7")
     public Map<String, Object> compareSchemas(
             @McpToolParam(name = "sources", description = "文件列表，每个包含 path, sheetName, alias") List<Map<String, String>> sources,
             @McpToolParam(name = "threshold", description = "相似度阈值 (0-1)，默认 0.6") Double threshold,
