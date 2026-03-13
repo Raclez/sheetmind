@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/Raclez/sheetmind/compare/v1.4.0...v1.4.1) (2026-03-13)
+
+
+### Documentation
+
+* **spreadsheet-tools:** 更新工具描述文档并优化参数说明 ([e9ea414](https://github.com/Raclez/sheetmind/commit/e9ea4149a2fd42d1f87734e534bd00df45688d7d))
+
 ## [1.4.0](https://github.com/Raclez/sheetmind/compare/v1.3.0...v1.4.0) (2026-03-12)
 
 
